@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DDR Tray Scanner</title>
+<style>
+  /* ─── Reset & base ──────────────────────────────────────────────────── */
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0a0a0f;
+    color: #e8e8ee;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  input, select, textarea { font-family: inherit; }
+  
+  /* ─── Layout primitives ─────────────────────────────────────────────── */
+  .page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .container { max-width: 1280px; margin: 0 auto; padding: 24px 20px; }
+  
+  /* ─── Auth ──────────────────────────────────────────────────────────── */
+  .auth-card {
+    background: #1a1a22;
+    border-radius: 16px;
+    padding: 32px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+  }
+  .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .logo-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, #FFD700, #FF8C00);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 22px; color: #1a1a2e;
+  }
+  .logo-title { font-size: 22px; font-weight: 800; color: #FFD700; letter-spacing: -0.4px; }
+  .logo-sub { font-size: 11px; color: #888; letter-spacing: 0.5px; }
+  .tabs { display: flex; margin-bottom: 24px; background: #15151c; border-radius: 10px; padding: 4px; }
+  .tab { flex: 1; padding: 10px 0; border: 0; background: transparent; color: #888; font-weight: 700; font-size: 12px; border-radius: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .tab.active { background: #FFD700; color: #1a1a2e; }
+  
+  /* ─── Form elements ─────────────────────────────────────────────────── */
+  .field { margin-bottom: 14px; }
+  .label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; display: block; }
+  input[type="text"], input[type="password"], input[type="number"], textarea, select {
+    width: 100%; background: #0a0a0f; border: 1px solid #2a2a35; color: #fff;
+    padding: 11px 14px; border-radius: 8px; font-size: 14px; outline: none;
+  }
+  input:focus, textarea:focus, select:focus { border-color: #FFD700; }
+  textarea { resize: vertical; min-height: 110px; font-family: ui-monospace, monospace; line-height: 1.5; }
+  
+  /* ─── Buttons ───────────────────────────────────────────────────────── */
+  .btn {
+    background: linear-gradient(135deg, #FFD700, #FF8C00);
+    color: #1a1a2e; border: 0; padding: 10px 20px; border-radius: 10px;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.5px;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost {
+    background: transparent; color: #888; border: 1px solid #2a2a35;
+    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  }
+  .btn-ghost:hover { color: #fff; border-color: #444; }
+  .btn-block { width: 100%; }
+  
+  /* ─── Notifications ─────────────────────────────────────────────────── */
+  .alert { padding: 10px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-top: 8px; }
+  .alert-error { background: #3a1520; color: #ff6b8a; }
+  .alert-success { background: #0a2818; color: #3ed685; }
+  .alert-info { background: #0f2240; color: #4fa3ff; }
+  
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: #1a1a22; padding: 14px 22px; border-radius: 10px;
+    font-weight: 700; font-size: 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    z-index: 200; animation: slide-in 0.2s ease-out;
+  }
+  @keyframes slide-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  
+  /* ─── Top bar ───────────────────────────────────────────────────────── */
+  .topbar {
+    background: #0f0f15; border-bottom: 1px solid #1f1f28;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar-inner {
+    max-width: 1280px; margin: 0 auto; padding: 12px 20px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .nav { flex: 1; display: flex; gap: 4px; justify-content: center; }
+  .nav button {
+    background: transparent; color: #888; font-weight: 700; font-size: 13px;
+    padding: 8px 16px; border-radius: 8px; border: 0; letter-spacing: 0.4px;
+  }
+  .nav button.active { background: #FFD700; color: #1a1a2e; }
+  .nav button:hover:not(.active) { color: #fff; }
+  
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%; color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+  }
+  .avatar-sm { width: 24px; height: 24px; font-size: 11px; }
+  .avatar-xs { width: 22px; height: 22px; font-size: 10px; border: 2px solid #1a1a22; }
+  
+  /* ─── Cards & panels ────────────────────────────────────────────────── */
+  .card { background: #1a1a22; border-radius: 14px; padding: 20px; }
+  .card-tight { padding: 16px; }
+  
+  /* ─── Project cards ─────────────────────────────────────────────────── */
+  .proj-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .proj-card {
+    text-align: left; border: 0; background: #1a1a22;
+    border-radius: 14px; padding: 20px;
+    transition: background 0.15s;
+  }
+  .proj-card:hover { background: #22222d; }
+  .proj-card.mixed { border-top: 3px solid #3ed685; }
+  .proj-card.separate { border-top: 3px solid #4fa3ff; }
+  
+  .badge {
+    font-size: 9px; font-weight: 800; letter-spacing: 1px;
+    padding: 3px 8px; border-radius: 4px;
+  }
+  .badge-mixed    { background: #0a2818; color: #3ed685; }
+  .badge-separate { background: #0f2240; color: #4fa3ff; }
+  .badge-full     { background: #3a1520; color: #ff6b8a; }
+  .badge-active   { background: #0a2818; color: #3ed685; }
+  
+  /* ─── Mode picker ───────────────────────────────────────────────────── */
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mode-opt {
+    text-align: left; border: 2px solid #2a2a35; background: transparent;
+    border-radius: 12px; padding: 14px; transition: all 0.15s;
+  }
+  .mode-opt.active.mixed { border-color: #3ed685; background: #15151c; }
+  .mode-opt.active.separate { border-color: #4fa3ff; background: #15151c; }
+  
+  /* ─── Tray cards ────────────────────────────────────────────────────── */
+  .tray-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .tray-card { background: #1a1a22; border-radius: 12px; padding: 16px; }
+  .tray-progress { height: 6px; background: #0a0a0f; border-radius: 3px; overflow: hidden; }
+  .tray-progress-fill { height: 100%; transition: width 0.3s; }
+  
+  /* ─── Brand pills ───────────────────────────────────────────────────── */
+  .pill {
+    color: #fff; padding: 3px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  }
+  .pill-large { padding: 5px 12px; font-size: 12px; }
+  
+  /* ─── Engine toggle ─────────────────────────────────────────────────── */
+  .engine-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: #15151c; border: 1px solid #2a2a35;
+    padding: 6px 10px; border-radius: 8px;
+  }
+  .engine-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .engine-popup {
+    position: absolute; top: calc(100% + 6px); right: 0;
+    background: #1a1a22; border: 1px solid #2a2a35; border-radius: 12px;
+    padding: 8px; width: 280px; z-index: 100;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+  }
+  .engine-opt {
+    width: 100%; text-align: left; border: 0; background: transparent;
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 2px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .engine-opt.active { background: #15151c; }
+  .engine-opt:hover { background: #15151c; }
+  
+  /* ─── Modal ─────────────────────────────────────────────────────────── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 300;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-content {
+    background: #1a1a22; border-radius: 14px; padding: 24px;
+    max-width: 560px; width: 100%; max-height: 85vh; overflow: auto;
+  }
+  
+  /* ─── Empty states ──────────────────────────────────────────────────── */
+  .empty { background: #1a1a22; border-radius: 12px; padding: 48px 24px; text-align: center; color: #aaa; }
+  
+  /* ─── Stats ─────────────────────────────────────────────────────────── */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat { background: #1a1a22; border-radius: 12px; padding: 16px; }
+  .stat-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .stat-value { font-size: 28px; font-weight: 800; letter-spacing: -1px; }
+  
+  /* ─── Headings ──────────────────────────────────────────────────────── */
+  h1.h { font-size: 22px; font-weight: 800; color: #FFD700; letter-spacing: -0.5px; margin: 0 0 16px; }
+  h2.h2 { font-size: 16px; font-weight: 700; color: #e8e8ee; letter-spacing: -0.3px; margin: 0; }
+  
+  /* ─── Tables ────────────────────────────────────────────────────────── */
+  .history-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 0.8fr 0.7fr 0.6fr 0.7fr 0.7fr;
+    gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid #15151c; align-items: center;
+    font-size: 12px;
+  }
+  .history-head { background: #15151c; font-size: 10px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  
+  /* ─── Print styles for Zebra GK420d ─────────────────────────────────── */
+  @media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area {
+      position: absolute !important;
+      left: 0 !important; top: 0 !important;
+      width: 4in !important; height: 1.5in !important;
+      page-break-inside: avoid;
+    }
+    @page { size: 4in 1.5in; margin: 0; }
+  }
+  #print-area { display: none; }
+  #print-area.show { display: block; position: absolute; left: -9999px; }
+  
+  /* ─── Utility ───────────────────────────────────────────────────────── */
+  .mono { font-family: ui-monospace, "SF Mono", monospace; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flex { display: flex; }
+  .flex-1 { flex: 1; }
+  .gap-8 { gap: 8px; }
+  .gap-12 { gap: 12px; }
+  .gap-16 { gap: 16px; }
+  .items-center { align-items: center; }
+  .justify-between { justify-content: space-between; }
+  
+  @media (max-width: 700px) {
+    .topbar-inner { flex-wrap: wrap; }
+    .nav { order: 3; width: 100%; flex-wrap: wrap; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .history-row { grid-template-columns: 1fr 1fr; gap: 6px; }
+    .history-head { display: none; }
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- Modal container (shared) -->
+<div id="modal" class="modal-overlay" onclick="if(event.target===this) hideModal()">
+  <div class="modal-content" id="modal-content"></div>
+</div>
+
+<!-- Print area for Zebra labels -->
+<div id="print-area"></div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+"use strict";
+
+/* ════════════════════════════════════════════════════════════════════════
+   SUPABASE STATE MANAGEMENT
+   ════════════════════════════════════════════════════════════════════════ */
+const SUPABASE_URL = "https://sbtrnftngswxivqkssjj.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNidHJuZnRuZ3N3eGl2cWtzc2pqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODAwMTU5NCwiZXhwIjoyMDkzNTc3NTk0fQ.rudx0vCPsOZhPvTCmXIrcSoViOcGZ6hv07WRWpqpWIk";
+
+let sb = null; // Supabase client — initialized safely below
+try {
+  if (window.supabase && window.supabase.createClient) {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+} catch (e) { console.warn("Supabase init failed:", e); }
+
+const STORAGE_KEY = "ddr_scanner_v5";
+const DEFAULT_STATE = {
+  users: [
+    { id: "u1", username: "admin",      password: "admin", role: "admin",      name: "Admin",    color: "#FFD700" },
+    { id: "u2", username: "mohan",      password: "demo",  role: "scanner",    name: "Mohan C.", color: "#1428A0" },
+    { id: "u3", username: "ashu",       password: "demo",  role: "scanner",    name: "Ashu",     color: "#CC0000" },
+    { id: "u4", username: "ronny",      password: "demo",  role: "scanner",    name: "Ronny",    color: "#007A33" },
+    { id: "u5", username: "supervisor", password: "demo",  role: "supervisor", name: "Lead",     color: "#E65100" },
+  ],
+  projects: [
+    { id: "p1", name: "DDR Sort \u2014 Q4", mode: "mixed",    memberIds: ["u2","u3","u4"], defaultCap: 50,  autoprint: true,  createdBy: "u1", createdAt: Date.now() - 86400000 },
+    { id: "p2", name: "Bulk Audit",     mode: "separate", memberIds: ["u2","u5"],     defaultCap: 100, autoprint: true,  createdBy: "u1", createdAt: Date.now() - 3600000  },
+  ],
+  scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: "",
+};
+
+let state = {
+  users: [], projects: [], scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: ""
+};
+let stateLoaded = false;
+let useSupabase = !!sb;
+
+function loadLocalState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return JSON.parse(JSON.stringify(DEFAULT_STATE));
+    return { ...JSON.parse(JSON.stringify(DEFAULT_STATE)), ...JSON.parse(raw) };
+  } catch { return JSON.parse(JSON.stringify(DEFAULT_STATE)); }
+}
+function saveLocalState() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.warn("Save failed:", e); }
+}
+
+async function initSupabaseState() {
+  if (!sb) {
+    // Supabase not available — fall back to localStorage
+    console.warn("Supabase not available, using localStorage");
+    state = loadLocalState();
+    useSupabase = false;
+    stateLoaded = true;
+    render();
+    return;
+  }
+  try {
+    const [usersRes, projectsRes, scansRes, traysRes, settingsRes] = await Promise.all([
+      sb.from('users').select('*'),
+      sb.from('projects').select('*'),
+      sb.from('scans').select('*').order('ts', { ascending: false }),
+      sb.from('trays').select('*'),
+      sb.from('settings').select('*')
+    ]);
+
+    // Check for errors
+    if (usersRes.error || projectsRes.error) {
+      throw new Error(usersRes.error?.message || projectsRes.error?.message || 'Fetch failed');
+    }
+
+    if (usersRes.data) state.users = usersRes.data;
+    if (projectsRes.data) state.projects = projectsRes.data;
+    if (scansRes.data) state.scans = scansRes.data;
+    if (traysRes.data) state.trays = traysRes.data;
+    
+    if (settingsRes.data) {
+      const eng = settingsRes.data.find(s => s.key === 'engine');
+      const gk = settingsRes.data.find(s => s.key === 'geminiKey');
+      if (eng) state.engine = eng.value;
+      if (gk) state.geminiKey = gk.value;
+    }
+
+    updateTrayCounters();
+    useSupabase = true;
+    stateLoaded = true;
+    setupRealtime();
+    render();
+  } catch (err) {
+    console.warn("Supabase fetch failed, falling back to localStorage:", err);
+    state = loadLocalState();
+    useSupabase = false;
+    stateLoaded = true;
+    render();
+  }
+}
+
+function updateTrayCounters() {
+  state.trayCounters = {};
+  for (const t of state.trays) {
+    if (!state.trayCounters[t.projectId] || t.trayNum > state.trayCounters[t.projectId]) {
+      state.trayCounters[t.projectId] = t.trayNum;
+    }
+  }
+}
+
+function setupRealtime() {
+  if (!sb) return;
+  sb.channel('public:any')
+    .on('postgres_changes', { event: '*', schema: 'public' }, () => fetchDataSilent())
+    .subscribe();
+}
+
+async function fetchDataSilent() {
+  if (!sb) return;
+  try {
+    const [projectsRes, scansRes, traysRes, settingsRes] = await Promise.all([
+      sb.from('projects').select('*'),
+      sb.from('scans').select('*').order('ts', { ascending: false }),
+      sb.from('trays').select('*'),
+      sb.from('settings').select('*')
+    ]);
+    
+    if (projectsRes.data) state.projects = projectsRes.data;
+    if (scansRes.data) state.scans = scansRes.data;
+    if (traysRes.data) state.trays = traysRes.data;
+    
+    if (settingsRes.data) {
+      const eng = settingsRes.data.find(s => s.key === 'engine');
+      const gk = settingsRes.data.find(s => s.key === 'geminiKey');
+      if (eng) state.engine = eng.value;
+      if (gk) state.geminiKey = gk.value;
+    }
+    
+    updateTrayCounters();
+    render();
+  } catch (err) { console.warn("Realtime refresh failed:", err); }
+}
+
+// Helper to save to Supabase OR localStorage
+async function dbSave(table, action, data, matchField) {
+  if (useSupabase && sb) {
+    try {
+      if (action === 'insert') await sb.from(table).insert(data);
+      else if (action === 'update') await sb.from(table).update(data.updates).eq(matchField, data.id);
+      else if (action === 'upsert') await sb.from(table).upsert(data);
+    } catch (err) { console.warn(`DB ${action} failed:`, err); }
+  }
+  saveLocalState();
+}
+
+// Session state (not persisted)
+let session = {
+  currentUser: null,
+  currentProjectId: null,
+  page: "scanner",     // "projects" | "scanner" | "trays" | "history" | "admin"
+  authView: "login",
+};
+
+/* ════════════════════════════════════════════════════════════════════════
+   CONSTANTS
+   ════════════════════════════════════════════════════════════════════════ */
+const BRAND_META = {
+  "Samsung":    { hex: "#1428A0", abbr: "SAM" },
+  "SK Hynix":   { hex: "#CC0000", abbr: "HYN" },
+  "Micron":     { hex: "#007A33", abbr: "MIC" },
+  "Crucial":    { hex: "#E65100", abbr: "CRU" },
+  "Kingston":   { hex: "#660099", abbr: "KNG" },
+  "Unknown":    { hex: "#555555", abbr: "UNK" },
+};
+const GEN_META = {
+  "DDR3":    { bg: "#3a1520", fg: "#ff6b8a" },
+  "DDR4":    { bg: "#0f2240", fg: "#4fa3ff" },
+  "DDR5":    { bg: "#0a2818", fg: "#3ed685" },
+  "Unknown": { bg: "#1a1a22", fg: "#888" },
+};
+
+const SAMPLE_SCANS = [
+  "PH M393B2G70QH0-YK0 1418",
+  "CN M471A1K43DB1-CTD 1617",
+  "KR HMT451U6BFR8A-PB 1523",
+  "(S)SN938475 (P)HMA41GR7MFR4N-TF (L)16GB DDR4 2133 ECC",
+  "(L)8GB DDR4 (S)X123ABC (P)CT8G4DFS8266",
+  "KVR24N17S8/8 1712",
+  "Samsung K4A8G085WC-BCTD 8GB DDR4",
+  "(P)HMB84GR7AFR8N (S)HYX8392 (L)32GB DDR5",
+  "MT18ASF2G72PDZ-2G6J1 ECC",
+  "Crucial CT16G4DFRA32A 16GB DDR4",
+];
+
+/* ════════════════════════════════════════════════════════════════════════
+   CLASSIFIER — rule-based + optional Gemini AI
+   ════════════════════════════════════════════════════════════════════════ */
+function classifyWithRules(scan) {
+  if (!scan) return null;
+  const s = scan.toUpperCase();
+
+  let partNumber = "";
+  if (scan.includes("(P)")) {
+    const a = scan.slice(scan.indexOf("(P)") + 3);
+    const tags = ["(M)", "(S)", "(L)"].map(t => a.indexOf(t)).filter(i => i >= 0);
+    const end = tags.length ? Math.min(...tags) : a.length;
+    partNumber = a.slice(0, end).trim().split(/\s/)[0];
+  } else {
+    const clean = scan.replace(/©MLCC/gi, "").replace(/©mlcc/gi, "").trim();
+    const parts = clean.split(/\s+/);
+    partNumber = (parts.length > 1 && parts[0].length <= 3 ? parts[1] : parts[0]) || "";
+  }
+  let serial = "";
+  if (scan.includes("(S)")) {
+    const a = scan.slice(scan.indexOf("(S)") + 3);
+    const tags = ["(P)", "(L)"].map(t => a.indexOf(t)).filter(i => i >= 0);
+    serial = a.slice(0, tags.length ? Math.min(...tags) : a.length).trim();
+  }
+  let label = "";
+  if (scan.includes("(L)")) {
+    const a = scan.slice(scan.indexOf("(L)") + 3);
+    const tags = ["(S)", "(P)"].map(t => a.indexOf(t)).filter(i => i >= 0);
+    label = a.slice(0, tags.length ? Math.min(...tags) : a.length).trim();
+  }
+
+  const P = partNumber.toUpperCase();
+  let generation = "Unknown";
+  if (s.includes("DDR5") || s.includes("PC5-") || s.includes("PC5_")) generation = "DDR5";
+  else if (s.includes("DDR4") || s.includes("PC4-") || s.includes("PC4_")) generation = "DDR4";
+  else if (s.includes("DDR3") || s.includes("PC3-") || s.includes("PC3_")) generation = "DDR3";
+  else if (P.startsWith("HMT")) generation = "DDR3";
+  else if (P.startsWith("HMA")) generation = "DDR4";
+  else if (P.startsWith("HMB")) generation = "DDR5";
+  else if (P.startsWith("M471") || P.startsWith("M378") || P.startsWith("M393")) {
+    const c = P.substr(4, 1);
+    generation = c === "A" ? "DDR4" : c === "B" ? "DDR5" : "DDR3";
+  } else if (P.startsWith("CT") && s.includes("DDR3")) generation = "DDR3";
+  else if (P.startsWith("CT") && s.includes("DDR4")) generation = "DDR4";
+
+  let brand = "Unknown";
+  if (s.includes("SAMSUNG") || P.startsWith("M3") || P.startsWith("K4")) brand = "Samsung";
+  else if (s.includes("HYNIX") || P.startsWith("HMT") || P.startsWith("HMA") || P.startsWith("HMB") || P.startsWith("HX")) brand = "SK Hynix";
+  else if (s.includes("MICRON") || P.startsWith("MT")) brand = "Micron";
+  else if (s.includes("CRUCIAL") || P.startsWith("CT")) brand = "Crucial";
+  else if (s.includes("KINGSTON") || P.startsWith("KVR") || P.startsWith("KSM") || P.startsWith("KF")) brand = "Kingston";
+
+  let confidence = 0.5;
+  if (brand !== "Unknown" && generation !== "Unknown") confidence = 0.92;
+  else if (brand !== "Unknown" || generation !== "Unknown") confidence = 0.7;
+
+  return { brand, generation, partNumber, serial, label, confidence, method: "rule" };
+}
+
+const CLASSIFIER_PROMPT = `You are a DDR memory module identification expert. Analyze QR scan strings.
+GENERATION: DDR5 only if "DDR5"/"PC5-" present. DDR4 if "DDR4"/"PC4-". DDR3 if "DDR3"/"PC3-". HMT→DDR3, HMA→DDR4, HMB→DDR5. M471/M378/M393: A=DDR4, B=DDR5, else DDR3.
+BRAND: Samsung, SK Hynix, Micron, Crucial, Kingston, or Unknown.
+EXTRACT: Serial between (S) and next tag. Part between (P) and next tag. Label between (L) and next tag.
+NEVER guess. DDR5 only if explicit. Output ONLY this JSON:
+{"brand":"...","generation":"...","partNumber":"...","serial":"...","label":"...","confidence":0.95}`;
+
+async function classifyWithGemini(scan, apiKey) {
+  if (!apiKey) return null;
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: CLASSIFIER_PROMPT }] },
+        contents: [{ parts: [{ text: `SCAN: ${scan}` }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 300 },
+      }),
+    });
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    return { ...JSON.parse(cleaned), method: "gemini" };
+  } catch { return null; }
+}
+
+async function classify(scan) {
+  if (state.engine === "gemini" && state.geminiKey) {
+    const r = await classifyWithGemini(scan, state.geminiKey);
+    if (r && r.confidence >= 0.75) return r;
+    const fb = classifyWithRules(scan);
+    return fb ? { ...fb, method: "rule_fallback" } : null;
+  }
+  return classifyWithRules(scan);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TRAY ASSIGNMENT
+   ════════════════════════════════════════════════════════════════════════ */
+function assignTray(projectId, userId, classification) {
+  if (!classification?.partNumber) return null;
+  const project = state.projects.find(p => p.id === projectId);
+  if (!project) return null;
+
+  const part = classification.partNumber.toUpperCase();
+  const candidates = state.trays.filter(t => {
+    if (t.projectId !== projectId) return false;
+    if (t.partNumber.toUpperCase() !== part) return false;
+    if (project.mode === "separate" && t.ownerUserId !== userId) return false;
+    return true;
+  });
+
+  const sorted = [...candidates].sort((a, b) => b.createdAt - a.createdAt);
+  const open = sorted.find(t => t.sticks.length < t.capacity);
+  if (open) return { tray: open, status: "ADDED" };
+
+  const counter = state.trayCounters[projectId] || 0;
+  const newNum = counter + 1;
+  const newTray = {
+    id: `t_${projectId}_${newNum}`,
+    projectId, ownerUserId: project.mode === "separate" ? userId : null,
+    partNumber: classification.partNumber,
+    label: classification.label || "",
+    brand: classification.brand,
+    generation: classification.generation,
+    trayNum: newNum,
+    capacity: project.defaultCap,
+    sticks: [],
+    createdAt: Date.now(),
+    createdBy: userId,
+    projectName: project.name,
+  };
+  return { tray: newTray, status: candidates.length > 0 ? "OVERFLOW" : "NEW", isNew: true, newNum };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ROUTER
+   ════════════════════════════════════════════════════════════════════════ */
+function render() {
+  if (!stateLoaded) {
+    document.getElementById("root").innerHTML = `<div class="page"><div style="color: #888; font-size: 16px; font-weight: 600; text-align: center;"><div class="logo-icon" style="margin: 0 auto 16px;">D</div>Connecting to Team Sync...</div></div>`;
+    return;
+  }
+  if (!session.currentUser) {
+    renderAuth();
+    return;
+  }
+  if (!session.currentProjectId || session.page === "projects") {
+    renderProjectGate();
+    return;
+  }
+  renderApp();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTH SCREEN
+   ════════════════════════════════════════════════════════════════════════ */
+function renderAuth() {
+  const v = session.authView;
+  document.getElementById("root").innerHTML = `
+    <div class="page">
+      <div class="auth-card">
+        <div class="logo">
+          <div class="logo-icon">D</div>
+          <div>
+            <div class="logo-title">DDR Tray Scanner</div>
+            <div class="logo-sub">v5 · projects + printing</div>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab ${v === "login" ? "active" : ""}" onclick="setAuthView('login')">SIGN IN</button>
+          <button class="tab ${v === "register" ? "active" : ""}" onclick="setAuthView('register')">REGISTER</button>
+        </div>
+        <div class="field">
+          <div class="label">Username</div>
+          <input type="text" id="auth-user" autocomplete="username" />
+        </div>
+        <div class="field">
+          <div class="label">Password</div>
+          <input type="password" id="auth-pass" autocomplete="${v === 'login' ? 'current-password' : 'new-password'}" onkeydown="if(event.key==='Enter') doAuth()" />
+        </div>
+        <div id="auth-msg"></div>
+        <button class="btn btn-block" style="margin-top: 18px;" onclick="doAuth()">${v === "login" ? "Sign In" : "Create Account"}</button>
+        <div style="margin-top: 24px; padding: 14px 16px; background: #15151c; border-radius: 10px; font-size: 12px; color: #888; border: 1px dashed #333;">
+          <div style="color: #FFD700; font-weight: 700; margin-bottom: 6px;">Demo accounts</div>
+          <div>admin / admin · mohan / demo · ashu / demo · ronny / demo</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setAuthView(v) { session.authView = v; render(); }
+
+async function doAuth() {
+  const username = document.getElementById("auth-user").value.trim();
+  const password = document.getElementById("auth-pass").value;
+  const msgEl = document.getElementById("auth-msg");
+  msgEl.innerHTML = "";
+
+  if (!username || !password) {
+    msgEl.innerHTML = `<div class="alert alert-error">Enter username and password</div>`;
+    return;
+  }
+
+  if (session.authView === "register") {
+    if (state.users.find(u => u.username === username)) {
+      msgEl.innerHTML = `<div class="alert alert-error">Username taken</div>`;
+      return;
+    }
+    if (password.length < 4) {
+      msgEl.innerHTML = `<div class="alert alert-error">Password must be ≥ 4 characters</div>`;
+      return;
+    }
+    const newUser = {
+      id: `u${state.users.length + 1}`,
+      username, password, role: "scanner", name: username,
+      color: `hsl(${Math.floor(Math.random()*360)}, 70%, 50%)`,
+    };
+    state.users.push(newUser);
+    await dbSave('users', 'insert', newUser);
+    session.authView = "login";
+    render();
+    setTimeout(() => {
+      const m = document.getElementById("auth-msg");
+      if (m) m.innerHTML = `<div class="alert alert-success">Account created. Sign in.</div>`;
+    }, 50);
+    return;
+  }
+
+  const user = state.users.find(u => u.username === username && u.password === password);
+  if (!user) {
+    msgEl.innerHTML = `<div class="alert alert-error">Invalid credentials</div>`;
+    return;
+  }
+  session.currentUser = user;
+  session.currentProjectId = null;
+  render();
+}
+
+function logout() {
+  session.currentUser = null;
+  session.currentProjectId = null;
+  session.authView = "login";
+  render();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PROJECT GATE
+   ════════════════════════════════════════════════════════════════════════ */
+function renderProjectGate() {
+  const u = session.currentUser;
+  const myProjects = u.role === "admin"
+    ? state.projects
+    : state.projects.filter(p => p.memberIds.includes(u.id));
+
+  document.getElementById("root").innerHTML = `
+    <div class="page" style="align-items: flex-start;">
+      <div class="container" style="max-width: 880px;">
+        <div class="flex items-center justify-between" style="margin-bottom: 32px;">
+          <div>
+            <h1 style="font-size: 28px; font-weight: 800; color: #FFD700; letter-spacing: -0.5px; margin: 0;">Choose a project</h1>
+            <div style="font-size: 14px; color: #888; margin-top: 6px;">
+              Welcome <span style="color: ${u.color}">${escapeHtml(u.name)}</span> · pick a project to begin scanning
+            </div>
+          </div>
+          <button class="btn-ghost" onclick="logout()" style="font-size: 12px;">Sign out</button>
+        </div>
+
+        ${(u.role === "admin" || u.role === "supervisor") ? `
+          <button class="btn" style="margin-bottom: 20px;" onclick="openCreateProjectModal()">+ Create new project</button>
+        ` : ""}
+
+        ${myProjects.length === 0 ? `
+          <div class="empty">
+            <div style="font-size: 18px; margin-bottom: 8px;">No projects yet</div>
+            <div style="font-size: 13px; color: #777;">${u.role === "admin" || u.role === "supervisor" ? "Create one above to get started." : "Ask an admin to add you to a project."}</div>
+          </div>
+        ` : `
+          <div class="proj-grid">
+            ${myProjects.map(p => {
+              const members = state.users.filter(u2 => p.memberIds.includes(u2.id));
+              return `
+                <button class="proj-card ${p.mode}" onclick="selectProject('${p.id}')">
+                  <div class="flex justify-between items-center" style="margin-bottom: 12px;">
+                    <div style="font-size: 16px; font-weight: 700; color: #FFD700; letter-spacing: -0.3px;">${escapeHtml(p.name)}</div>
+                    <span class="badge badge-${p.mode}">${p.mode.toUpperCase()}</span>
+                  </div>
+                  <div style="font-size: 11px; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">
+                    ${members.length} member${members.length === 1 ? "" : "s"} · default ${p.defaultCap}/tray
+                  </div>
+                  <div class="flex gap-8" style="flex-wrap: wrap;">
+                    ${members.slice(0, 6).map(m => `
+                      <div class="avatar avatar-xs" title="${escapeHtml(m.name)}" style="background: ${m.color};">${m.name.charAt(0).toUpperCase()}</div>
+                    `).join("")}
+                    ${members.length > 6 ? `<div style="font-size: 11px; color: #888; align-self: center;">+${members.length - 6}</div>` : ""}
+                  </div>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        `}
+
+        <div style="margin-top: 32px; padding: 16px; background: #15151c; border-radius: 10px; font-size: 12px; color: #888; line-height: 1.7; border: 1px solid #2a2a35;">
+          <div style="color: #3ed685; font-weight: 700; margin-bottom: 4px;">● MIXED mode</div>
+          <div style="margin-bottom: 10px;">All members share trays. Same part = same tray for the whole team.</div>
+          <div style="color: #4fa3ff; font-weight: 700; margin-bottom: 4px;">● SEPARATE mode</div>
+          <div>Each scanner gets their own trays. No interaction between members.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function selectProject(pid) {
+  session.currentProjectId = pid;
+  session.page = "scanner";
+  render();
+}
+
+function openCreateProjectModal() {
+  const memberOpts = state.users.filter(u => u.role !== "admin").map(u => `
+    <button type="button" class="member-opt" data-uid="${u.id}" onclick="toggleMember('${u.id}')"
+      style="text-align: left; border: 2px solid #2a2a35; background: transparent; border-radius: 10px;
+      padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
+      <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
+      <div style="flex: 1; font-size: 12px; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
+      <span class="member-check" style="color: ${u.color}; font-weight: 700; display: none;">✓</span>
+    </button>
+  `).join("");
+
+  showModal(`
+    <h2 class="h2" style="margin-bottom: 16px; color: #FFD700;">New project</h2>
+    <div class="field">
+      <div class="label">Project name</div>
+      <input type="text" id="np-name" placeholder="e.g. DDR Audit — January" />
+    </div>
+    <div class="field">
+      <div class="label">Tray mode</div>
+      <div class="mode-grid">
+        <button type="button" class="mode-opt mixed active" data-mode="mixed" onclick="setMode('mixed')">
+          <div class="flex items-center gap-8" style="margin-bottom: 6px;">
+            <div style="width: 10px; height: 10px; border-radius: 50%; background: #3ed685;"></div>
+            <div style="font-size: 14px; font-weight: 700;">Mixed</div>
+          </div>
+          <div style="font-size: 12px; color: #aaa; line-height: 1.5;">All members share trays. Same part = same tray.</div>
+        </button>
+        <button type="button" class="mode-opt separate" data-mode="separate" onclick="setMode('separate')">
+          <div class="flex items-center gap-8" style="margin-bottom: 6px;">
+            <div style="width: 10px; height: 10px; border-radius: 50%; background: #4fa3ff;"></div>
+            <div style="font-size: 14px; font-weight: 700;">Separate</div>
+          </div>
+          <div style="font-size: 12px; color: #aaa; line-height: 1.5;">Each scanner has own trays. No interaction.</div>
+        </button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Default tray capacity</div>
+      <div class="flex gap-8 items-center" style="margin-bottom: 6px;">
+        <input type="number" id="np-cap" value="50" min="1" max="500" style="width: 100px;" />
+        <span style="font-size: 12px; color: #888;">sticks per tray (editable per tray later)</span>
+      </div>
+      <div class="flex gap-8" style="margin-top: 4px;">
+        ${[25, 35, 50, 100].map(n => `<button type="button" class="btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="document.getElementById('np-cap').value=${n}">${n}</button>`).join("")}
+      </div>
+    </div>
+    <div class="field">
+      <label class="flex items-center gap-8" style="font-size: 13px; color: #fff; cursor: pointer;">
+        <input type="checkbox" id="np-autoprint" checked style="width: auto;" />
+        Auto-print label when new tray is created
+      </label>
+    </div>
+    <div class="field">
+      <div class="label">Members</div>
+      <div id="member-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px;">
+        ${memberOpts}
+      </div>
+    </div>
+    <div id="np-msg"></div>
+    <div class="flex gap-8" style="justify-content: flex-end; margin-top: 20px;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doCreateProject()">Create project</button>
+    </div>
+  `);
+  
+  // Pre-select current user
+  toggleMember(session.currentUser.id);
+}
+
+let createProjectMode = "mixed";
+let createProjectMembers = new Set();
+
+function setMode(m) {
+  createProjectMode = m;
+  document.querySelectorAll(".mode-opt").forEach(el => {
+    el.classList.toggle("active", el.dataset.mode === m);
+  });
+}
+function toggleMember(uid) {
+  if (createProjectMembers.has(uid)) createProjectMembers.delete(uid);
+  else createProjectMembers.add(uid);
+  document.querySelectorAll(".member-opt").forEach(el => {
+    const sel = createProjectMembers.has(el.dataset.uid);
+    el.style.borderColor = sel ? state.users.find(u => u.id === el.dataset.uid).color : "#2a2a35";
+    el.style.background = sel ? "#15151c" : "transparent";
+    el.querySelector(".member-check").style.display = sel ? "inline" : "none";
+  });
+}
+
+async function doCreateProject() {
+  const name = document.getElementById("np-name").value.trim();
+  const cap = parseInt(document.getElementById("np-cap").value) || 50;
+  const ap = document.getElementById("np-autoprint").checked;
+  const msgEl = document.getElementById("np-msg");
+  msgEl.innerHTML = "";
+
+  if (!name) { msgEl.innerHTML = `<div class="alert alert-error">Name required</div>`; return; }
+  if (createProjectMembers.size === 0) { msgEl.innerHTML = `<div class="alert alert-error">Select at least one member</div>`; return; }
+
+  const newProject = {
+    id: `p${Date.now()}`, name, mode: createProjectMode,
+    memberIds: Array.from(createProjectMembers),
+    defaultCap: cap, autoprint: ap,
+    createdBy: session.currentUser.id, createdAt: Date.now(),
+  };
+  state.projects.push(newProject);
+  await dbSave('projects', 'insert', newProject);
+  
+  hideModal();
+  // Reset
+  createProjectMode = "mixed";
+  createProjectMembers = new Set();
+  selectProject(newProject.id);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   MAIN APP SHELL
+   ════════════════════════════════════════════════════════════════════════ */
+function renderApp() {
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  if (!project) {
+    session.currentProjectId = null;
+    render();
+    return;
+  }
+  const user = session.currentUser;
+
+  document.getElementById("root").innerHTML = `
+    <div class="topbar">
+      <div class="topbar-inner">
+        <button onclick="switchProject()" style="display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 0;">
+          <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #FFD700, #FF8C00); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; color: #1a1a2e;">D</div>
+          <div style="text-align: left;">
+            <div style="font-size: 11px; color: #888; letter-spacing: 0.5px; text-transform: uppercase;">Project</div>
+            <div style="font-size: 13px; font-weight: 700; color: #FFD700; display: flex; align-items: center; gap: 6px;">
+              ${escapeHtml(project.name)}
+              <span class="badge badge-${project.mode}">${project.mode.toUpperCase()}</span>
+            </div>
+          </div>
+        </button>
+        <nav class="nav">
+          <button class="${session.page === 'scanner' ? 'active' : ''}" onclick="setPage('scanner')">Scanner</button>
+          <button class="${session.page === 'trays' ? 'active' : ''}" onclick="setPage('trays')">Trays</button>
+          <button class="${session.page === 'history' ? 'active' : ''}" onclick="setPage('history')">History</button>
+          ${user.role === "admin" ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
+        </nav>
+        <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative;">
+          <span class="engine-dot" style="background: ${state.engine === 'rule' ? '#888' : '#4fa3ff'};"></span>
+          <span style="font-size: 11px; color: ${state.engine === 'rule' ? '#888' : '#4fa3ff'}; font-weight: 700; letter-spacing: 1px;">${state.engine.toUpperCase()}</span>
+          <span style="font-size: 10px; color: #666;">▾</span>
+          <div id="engine-popup" class="engine-popup" style="display: none;" onclick="event.stopPropagation()"></div>
+        </button>
+        <div class="flex items-center gap-8">
+          <div class="avatar" style="background: ${user.color};">${user.name.charAt(0).toUpperCase()}</div>
+          <div style="display: flex; flex-direction: column; line-height: 1.1;">
+            <span style="font-size: 13px; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
+            <span style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px;">${user.role}</span>
+          </div>
+          <button class="btn-ghost" style="font-size: 11px; padding: 6px 10px; margin-left: 4px;" onclick="logout()">Sign out</button>
+        </div>
+      </div>
+    </div>
+    <div class="container" id="page-content"></div>
+  `;
+  
+  if (session.page === "scanner") renderScanner();
+  else if (session.page === "trays") renderTraysPage();
+  else if (session.page === "history") renderHistoryPage();
+  else if (session.page === "admin") renderAdminPage();
+}
+
+function setPage(p) { session.page = p; render(); }
+function switchProject() { session.currentProjectId = null; session.page = "projects"; render(); }
+
+function toggleEnginePopup(ev) {
+  ev.stopPropagation();
+  const popup = document.getElementById("engine-popup");
+  if (popup.style.display === "block") {
+    popup.style.display = "none";
+    return;
+  }
+  popup.innerHTML = `
+    ${[
+      { id: "rule",   label: "Rules only",   desc: "Pattern-matching · free forever",       color: "#888"    },
+      { id: "gemini", label: "Gemini",       desc: "Google free tier · 15 req/min",         color: "#4fa3ff" },
+    ].map(opt => `
+      <button class="engine-opt ${state.engine === opt.id ? 'active' : ''}" onclick="setEngine('${opt.id}')">
+        <div style="width: 8px; height: 8px; border-radius: 50%; background: ${opt.color};"></div>
+        <div style="flex: 1;">
+          <div style="font-size: 13px; font-weight: 700; color: #fff;">${opt.label}</div>
+          <div style="font-size: 11px; color: #888;">${opt.desc}</div>
+        </div>
+        ${state.engine === opt.id ? `<div style="color: ${opt.color}; font-size: 12px;">✓</div>` : ""}
+      </button>
+    `).join("")}
+    ${state.engine === "gemini" ? `
+      <div style="margin-top: 8px; padding: 10px 12px; background: #15151c; border-radius: 8px;">
+        <div style="font-size: 10px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px;">Gemini API key</div>
+        <input type="text" id="gemini-key" placeholder="paste from aistudio.google.com" value="${state.geminiKey || ''}" 
+          onchange="saveGeminiKey(this.value)" style="font-size: 12px; padding: 6px 8px;" />
+        <div style="font-size: 10px; color: #666; margin-top: 6px;">
+          <a href="https://aistudio.google.com/apikey" target="_blank" style="color: #4fa3ff;">Get free key →</a>
+        </div>
+      </div>
+    ` : ""}
+  `;
+  popup.style.display = "block";
+  setTimeout(() => {
+    document.addEventListener("click", closeEnginePopup, { once: true });
+  }, 50);
+}
+function closeEnginePopup() {
+  const p = document.getElementById("engine-popup");
+  if (p) p.style.display = "none";
+}
+async function setEngine(e) { 
+  state.engine = e; 
+  await dbSave('settings', 'upsert', { key: 'engine', value: e });
+  toggleEnginePopup({stopPropagation:()=>{}}); 
+  render(); 
+}
+async function saveGeminiKey(v) { 
+  state.geminiKey = v; 
+  await dbSave('settings', 'upsert', { key: 'geminiKey', value: v });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SCANNER PAGE
+   ════════════════════════════════════════════════════════════════════════ */
+function renderScanner() {
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  const projectScans = state.scans.filter(s => s.projectId === project.id);
+  
+  document.getElementById("page-content").innerHTML = `
+    <div style="display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 24px;">
+      <div>
+        <h1 class="h">Scan</h1>
+        <div class="card">
+          <div class="label">QR / Barcode input</div>
+          <textarea id="scan-input" placeholder="Paste or type scan data here…&#10;e.g.  (P)HMA41GR7MFR4N-TF (S)SN938475 (L)16GB DDR4"></textarea>
+          <div class="flex gap-12" style="margin-top: 14px; flex-wrap: wrap;">
+            <button class="btn" id="scan-btn" onclick="doScan()">Scan ▶</button>
+            <button class="btn-ghost" onclick="loadSample()">Random sample</button>
+            <button class="btn-ghost" onclick="document.getElementById('scan-input').value=''">Clear</button>
+            <label class="flex items-center gap-8" style="font-size: 11px; color: #888; margin-left: auto; cursor: pointer;">
+              <input type="checkbox" id="autoprint-toggle" ${project.autoprint ? "checked" : ""} 
+                onchange="toggleAutoprint(this.checked)" style="width: auto;" />
+              auto-print labels
+            </label>
+          </div>
+          <div style="font-size: 10px; color: #666; margin-top: 10px; letter-spacing: 0.5px;">
+            ⌘/Ctrl + Enter to scan · Engine: ${state.engine.toUpperCase()} · Default cap: ${project.defaultCap}
+          </div>
+        </div>
+        <div id="result-card-container"></div>
+      </div>
+      
+      <div>
+        <h1 class="h">Recent</h1>
+        <div class="card" style="padding: 0; overflow: hidden; max-height: 720px; overflow-y: auto;">
+          ${projectScans.length === 0 ? `
+            <div class="empty" style="padding: 32px;">
+              <div style="font-size: 14px;">No scans yet</div>
+              <div style="font-size: 12px; color: #666; margin-top: 4px;">Scan a stick to begin</div>
+            </div>
+          ` : projectScans.slice(0, 25).map(s => {
+            const u = state.users.find(u => u.id === s.userId);
+            const tray = state.trays.find(t => t.id === s.trayId);
+            return `
+              <div style="padding: 12px 16px; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 10px;">
+                <div class="avatar avatar-sm" style="background: ${u?.color || '#555'};">${u?.name.charAt(0).toUpperCase() || '?'}</div>
+                <div style="flex: 1; min-width: 0;">
+                  <div class="mono truncate" style="font-size: 12px; color: #fff;">${escapeHtml(s.result.partNumber || s.scan.slice(0, 30))}</div>
+                  <div style="font-size: 10px; color: #888; margin-top: 2px;">Tray #${tray?.trayNum} · ${timeAgo(s.ts)}</div>
+                </div>
+                <span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Wire up keyboard shortcut
+  const ti = document.getElementById("scan-input");
+  if (ti) ti.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) doScan();
+  });
+}
+
+function loadSample() {
+  document.getElementById("scan-input").value = SAMPLE_SCANS[Math.floor(Math.random() * SAMPLE_SCANS.length)];
+}
+
+async function toggleAutoprint(checked) {
+  const p = state.projects.find(p => p.id === session.currentProjectId);
+  if (p) { 
+    p.autoprint = checked; 
+    await dbSave('projects', 'update', { updates: { autoprint: checked }, id: p.id }, 'id');
+  }
+}
+
+async function doScan() {
+  const input = document.getElementById("scan-input");
+  const btn = document.getElementById("scan-btn");
+  const scan = input.value.trim();
+  if (!scan) return;
+  
+  btn.textContent = "Analyzing…";
+  btn.disabled = true;
+  
+  const result = await classify(scan);
+  if (!result) {
+    showToast("Classification failed", "#ff6b8a");
+    btn.textContent = "Scan ▶"; btn.disabled = false;
+    return;
+  }
+  const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
+  if (!assignment) {
+    showToast("No part number — cannot assign tray", "#ff6b8a");
+    btn.textContent = "Scan ▶"; btn.disabled = false;
+    return;
+  }
+  
+  const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+  const newScan = {
+    id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+    ts: Date.now(), scan, result, trayId: assignment.tray.id,
+  };
+  
+  if (assignment.isNew) {
+    state.trays.push({ ...assignment.tray, sticks: [scanId] });
+    state.trayCounters[session.currentProjectId] = assignment.newNum;
+    await dbSave('trays', 'insert', { ...assignment.tray, sticks: [scanId] });
+  } else {
+    const tray = state.trays.find(t => t.id === assignment.tray.id);
+    tray.sticks.push(scanId);
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+  }
+  state.scans.unshift(newScan);
+  await dbSave('scans', 'insert', newScan);
+  
+  input.value = "";
+  btn.textContent = "Scan ▶"; btn.disabled = false;
+  
+  const trayN = assignment.tray.trayNum || assignment.newNum;
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  
+  // Render result card
+  renderResultCard(newScan, assignment);
+  
+  // Show toast
+  if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
+  else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
+  else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
+  
+  // Auto-print if enabled and new tray
+  if (assignment.isNew && project.autoprint) {
+    setTimeout(() => {
+      const tray = state.trays.find(t => t.id === assignment.tray.id);
+      printTrayLabel(tray);
+    }, 400);
+  }
+  
+  // Refresh recent list
+  renderScanner();
+}
+
+function renderResultCard(scan, assignment) {
+  const r = scan.result;
+  const tray = state.trays.find(t => t.id === scan.trayId);
+  const owner = tray ? state.users.find(u => u.id === tray.ownerUserId) : null;
+  const brandMeta = BRAND_META[r.brand] || BRAND_META.Unknown;
+  const genMeta = GEN_META[r.generation] || GEN_META.Unknown;
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  
+  document.getElementById("result-card-container").innerHTML = `
+    <div style="margin-top: 20px; background: #1a1a22; border-radius: 14px; overflow: hidden; border-left: 4px solid ${brandMeta.hex};">
+      <div style="padding: 20px;">
+        <div class="flex items-center justify-between" style="margin-bottom: 16px;">
+          <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;">Last result</div>
+          <span class="pill" style="background: #1f1d10; color: #FFD700;">${(r.method || "rule").toUpperCase()}</span>
+        </div>
+        <div class="mono" style="font-size: 22px; font-weight: 800; color: #FFD700; margin-bottom: 14px; word-break: break-all;">
+          ${escapeHtml(r.partNumber || "(no part)")}
+        </div>
+        <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 16px;">
+          <span class="pill pill-large" style="background: ${brandMeta.hex};">${escapeHtml(r.brand)}</span>
+          <span class="pill pill-large" style="background: ${genMeta.bg}; color: ${genMeta.fg};">${escapeHtml(r.generation)}</span>
+          <span class="pill pill-large" style="background: #0a2818; color: #3ed685;">CONF ${Math.round((r.confidence || 0) * 100)}%</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+          <div>
+            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px;">Serial</div>
+            <div class="mono" style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.serial || "—")}</div>
+          </div>
+          <div>
+            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px;">Label</div>
+            <div style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.label || "—")}</div>
+          </div>
+        </div>
+      </div>
+      <div style="background: #15151c; padding: 14px 20px; border-top: 1px solid #2a2a35; display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;">Tray assignment</div>
+          <div style="font-size: 18px; font-weight: 800; color: #3ed685; margin-top: 2px;">
+            #${tray?.trayNum}
+            <span style="font-size: 12px; color: #888; margin-left: 8px; font-weight: 500;">${tray?.sticks.length}/${tray?.capacity} sticks</span>
+          </div>
+        </div>
+        <div class="flex gap-8">
+          <button class="btn-ghost" style="font-size: 11px; padding: 6px 10px;" onclick="printTrayLabelById('${tray?.id}')">🖨 Print label</button>
+          ${project.mode === "separate" && owner ? `<div style="font-size: 11px; color: #888; align-self: center;">owner: <span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span></div>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TRAYS PAGE
+   ════════════════════════════════════════════════════════════════════════ */
+let trayFilter = "all";
+function renderTraysPage() {
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId === project.id);
+  
+  const visible = projectTrays.filter(t => {
+    if (trayFilter === "mine" && project.mode === "separate" && t.ownerUserId !== session.currentUser.id) return false;
+    if (trayFilter === "full" && t.sticks.length < t.capacity) return false;
+    if (trayFilter === "active" && t.sticks.length >= t.capacity) return false;
+    return true;
+  }).sort((a, b) => a.trayNum - b.trayNum);
+  
+  const filterBtns = [
+    { id: "all", label: "All" },
+    ...(project.mode === "separate" ? [{ id: "mine", label: "Mine" }] : []),
+    { id: "active", label: "Active" },
+    { id: "full", label: "Full" },
+  ];
+  
+  document.getElementById("page-content").innerHTML = `
+    <div class="flex items-center justify-between" style="margin-bottom: 16px;">
+      <h1 class="h" style="margin-bottom: 0;">Trays · ${projectTrays.length}</h1>
+      <div class="flex gap-8">
+        ${filterBtns.map(f => `
+          <button onclick="setTrayFilter('${f.id}')" 
+            style="background: ${trayFilter === f.id ? '#FFD700' : '#1a1a22'}; color: ${trayFilter === f.id ? '#1a1a2e' : '#888'}; border: 0; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
+            ${f.label}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+    
+    ${visible.length === 0 ? `
+      <div class="empty">No trays match this filter</div>
+    ` : `
+      <div class="tray-grid">
+        ${visible.map(t => {
+          const owner = state.users.find(u => u.id === t.ownerUserId);
+          const creator = state.users.find(u => u.id === t.createdBy);
+          const pct = (t.sticks.length / t.capacity) * 100;
+          const isFull = t.sticks.length >= t.capacity;
+          const brandMeta = BRAND_META[t.brand] || BRAND_META.Unknown;
+          const barColor = isFull ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
+          return `
+            <div class="tray-card" style="border-left: 3px solid ${isFull ? '#ff6b8a' : brandMeta.hex};">
+              <div class="flex justify-between items-center" style="margin-bottom: 10px;">
+                <div style="font-size: 22px; font-weight: 800; color: #FFD700; letter-spacing: -0.5px;">#${t.trayNum}</div>
+                <span class="badge ${isFull ? 'badge-full' : 'badge-active'}">${isFull ? 'FULL' : 'ACTIVE'}</span>
+              </div>
+              <div class="mono" style="font-size: 13px; font-weight: 600; color: #fff; word-break: break-all; margin-bottom: 6px;">${escapeHtml(t.partNumber)}</div>
+              <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 10px;">
+                <span class="pill" style="background: ${brandMeta.hex};">${escapeHtml(t.brand)}</span>
+                <span class="pill" style="background: ${GEN_META[t.generation]?.bg || '#1a1a22'}; color: ${GEN_META[t.generation]?.fg || '#888'};">${escapeHtml(t.generation)}</span>
+              </div>
+              <div class="tray-progress" style="margin-bottom: 6px;">
+                <div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div>
+              </div>
+              <div class="flex justify-between" style="font-size: 11px; color: #888;">
+                <span><b style="color: #fff;">${t.sticks.length}</b> / ${t.capacity}</span>
+                ${project.mode === "separate" && owner ? 
+                  `<span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span>` :
+                  creator ? `<span style="color: #888;">opened by <span style="color: ${creator.color};">${escapeHtml(creator.name)}</span></span>` : ""}
+              </div>
+              <div class="flex gap-8" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #2a2a35;">
+                <button class="btn-ghost" style="flex: 1; font-size: 11px; padding: 6px;" onclick="openCapEditModal('${t.id}')">edit cap</button>
+                <button class="btn-ghost" style="flex: 1; font-size: 11px; padding: 6px;" onclick="printTrayLabelById('${t.id}')">🖨 print</button>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `}
+  `;
+}
+function setTrayFilter(f) { trayFilter = f; renderTraysPage(); }
+
+function openCapEditModal(trayId) {
+  const tray = state.trays.find(t => t.id === trayId);
+  if (!tray) return;
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 12px;">Edit capacity · tray #${tray.trayNum}</h2>
+    <div class="mono" style="font-size: 12px; color: #888; margin-bottom: 14px;">${escapeHtml(tray.partNumber)}</div>
+    <div class="field">
+      <div class="label">New capacity (sticks per tray)</div>
+      <input type="number" id="cap-input" value="${tray.capacity}" min="${tray.sticks.length}" max="500" />
+    </div>
+    <div class="flex gap-8" style="margin-bottom: 8px;">
+      ${[25, 35, 50, 100].map(n => `<button class="btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="document.getElementById('cap-input').value=${n}">${n}</button>`).join("")}
+    </div>
+    <div id="cap-warn" style="font-size: 11px; color: #888; margin-bottom: 12px;">tray currently holds ${tray.sticks.length} sticks</div>
+    <div class="flex gap-8" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="saveCapEdit('${tray.id}')">Save</button>
+    </div>
+  `);
+  
+  document.getElementById("cap-input").addEventListener("input", e => {
+    const v = parseInt(e.target.value) || 0;
+    const warn = document.getElementById("cap-warn");
+    if (v < tray.sticks.length) {
+      warn.style.color = "#ff6b8a";
+      warn.textContent = `⚠ cannot be less than current sticks (${tray.sticks.length})`;
+    } else {
+      warn.style.color = "#888";
+      warn.textContent = `tray currently holds ${tray.sticks.length} sticks`;
+    }
+  });
+}
+
+async function saveCapEdit(trayId) {
+  const tray = state.trays.find(t => t.id === trayId);
+  if (!tray) return;
+  const v = parseInt(document.getElementById("cap-input").value) || 0;
+  if (v < tray.sticks.length) return;
+  tray.capacity = v;
+  await dbSave('trays', 'update', { updates: { capacity: v }, id: tray.id }, 'id');
+  hideModal();
+  renderTraysPage();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   HISTORY PAGE
+   ════════════════════════════════════════════════════════════════════════ */
+let historyFilter = "all";
+function renderHistoryPage() {
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  const projectScans = state.scans.filter(s => s.projectId === project.id);
+  const filtered = historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId === historyFilter);
+  
+  document.getElementById("page-content").innerHTML = `
+    <div class="flex items-center justify-between" style="margin-bottom: 16px;">
+      <h1 class="h" style="margin-bottom: 0;">History · ${filtered.length} scans</h1>
+      <select onchange="setHistoryFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 8px 12px; border-radius: 8px; font-size: 12px; width: auto;">
+        <option value="all">All members</option>
+        ${state.users.filter(u => project.memberIds.includes(u.id)).map(u => 
+          `<option value="${u.id}" ${historyFilter === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`
+        ).join("")}
+      </select>
+    </div>
+    
+    ${filtered.length === 0 ? `
+      <div class="empty">No scans yet</div>
+    ` : `
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="history-row history-head">
+          <div>When</div><div>Part</div><div>Brand</div><div>Gen</div><div>Tray</div><div>By</div><div>Method</div>
+        </div>
+        ${filtered.slice(0, 200).map(s => {
+          const u = state.users.find(u => u.id === s.userId);
+          const tray = state.trays.find(t => t.id === s.trayId);
+          return `
+            <div class="history-row">
+              <div style="color: #888;">${timeAgo(s.ts)}</div>
+              <div class="mono truncate" style="color: #fff;">${escapeHtml(s.result.partNumber)}</div>
+              <div><span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span></div>
+              <div><span class="pill" style="background: ${GEN_META[s.result.generation]?.bg}; color: ${GEN_META[s.result.generation]?.fg};">${s.result.generation}</span></div>
+              <div style="color: #FFD700; font-weight: 700;">#${tray?.trayNum}</div>
+              <div style="color: ${u?.color}; font-weight: 600;">${escapeHtml(u?.name || '?')}</div>
+              <div><span class="pill" style="background: #1f1d10; color: #FFD700;">${(s.result.method || 'rule').toUpperCase()}</span></div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `}
+  `;
+}
+function setHistoryFilter(f) { historyFilter = f; renderHistoryPage(); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ADMIN PAGE
+   ════════════════════════════════════════════════════════════════════════ */
+function renderAdminPage() {
+  const project = state.projects.find(p => p.id === session.currentProjectId);
+  const projectScans = state.scans.filter(s => s.projectId === project.id);
+  const projectTrays = state.trays.filter(t => t.projectId === project.id);
+  
+  document.getElementById("page-content").innerHTML = `
+    <h1 class="h">Admin · ${escapeHtml(project.name)}</h1>
+    
+    <div class="stats" style="margin-bottom: 24px;">
+      <div class="stat" style="border-top: 2px solid #3ed685;">
+        <div class="stat-label">Total scans</div>
+        <div class="stat-value" style="color: #3ed685;">${projectScans.length}</div>
+      </div>
+      <div class="stat" style="border-top: 2px solid #4fa3ff;">
+        <div class="stat-label">Active trays</div>
+        <div class="stat-value" style="color: #4fa3ff;">${projectTrays.filter(t => t.sticks.length < t.capacity).length}</div>
+      </div>
+      <div class="stat" style="border-top: 2px solid #ff6b8a;">
+        <div class="stat-label">Full trays</div>
+        <div class="stat-value" style="color: #ff6b8a;">${projectTrays.filter(t => t.sticks.length >= t.capacity).length}</div>
+      </div>
+      <div class="stat" style="border-top: 2px solid #FFD700;">
+        <div class="stat-label">Members</div>
+        <div class="stat-value" style="color: #FFD700;">${project.memberIds.length}</div>
+      </div>
+    </div>
+    
+    <h2 class="h2" style="margin-bottom: 12px;">Project members</h2>
+    <div class="card card-tight" style="margin-bottom: 24px;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px;">
+        ${state.users.filter(u => u.role !== "admin").map(u => {
+          const sel = project.memberIds.includes(u.id);
+          return `
+            <button onclick="toggleProjectMember('${project.id}','${u.id}')" 
+              style="text-align: left; border: ${sel ? '2px solid ' + u.color : '2px solid #2a2a35'}; background: ${sel ? '#15151c' : 'transparent'}; border-radius: 10px; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
+              <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
+              <div style="flex: 1; font-size: 12px; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
+              ${sel ? `<span style="color: ${u.color}; font-weight: 700;">✓</span>` : ""}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+    
+    <h2 class="h2" style="margin-bottom: 12px;">All projects</h2>
+    <div class="card" style="padding: 0; overflow: hidden;">
+      ${state.projects.map(pr => `
+        <div style="padding: 14px 16px; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 12px;">
+          <div style="flex: 1;">
+            <div class="flex items-center gap-8">
+              <span style="color: #FFD700; font-weight: 700; font-size: 14px;">${escapeHtml(pr.name)}</span>
+              <span class="badge badge-${pr.mode}">${pr.mode.toUpperCase()}</span>
+            </div>
+            <div style="font-size: 11px; color: #888; margin-top: 4px;">
+              ${pr.memberIds.length} members · ${state.scans.filter(s => s.projectId === pr.id).length} scans · default ${pr.defaultCap}/tray
+            </div>
+          </div>
+          ${pr.id === project.id ? `<span style="color: #3ed685; font-size: 11px; font-weight: 700;">● ACTIVE</span>` : ""}
+        </div>
+      `).join("")}
+    </div>
+    
+    <div style="margin-top: 24px;">
+      <h2 class="h2" style="margin-bottom: 12px;">Danger zone</h2>
+      <div class="card card-tight">
+        <button class="btn-ghost" onclick="if(confirm('Reset ALL data? This deletes all projects, scans, trays.')){localStorage.removeItem('${STORAGE_KEY}');location.reload();}" 
+          style="border-color: #ff6b8a; color: #ff6b8a;">
+          Reset all data
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleProjectMember(projectId, userId) {
+  const p = state.projects.find(p => p.id === projectId);
+  if (!p) return;
+  if (p.memberIds.includes(userId)) {
+    p.memberIds = p.memberIds.filter(id => id !== userId);
+  } else {
+    p.memberIds.push(userId);
+  }
+  await dbSave('projects', 'update', { updates: { memberIds: p.memberIds }, id: p.id }, 'id');
+  renderAdminPage();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ZEBRA GK420d LABEL PRINTING (4" × 1.5" at 203 DPI)
+   ════════════════════════════════════════════════════════════════════════ */
+function printTrayLabelById(trayId) {
+  const tray = state.trays.find(t => t.id === trayId);
+  if (tray) printTrayLabel(tray);
+}
+
+function printTrayLabel(tray) {
+  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
+  const labelHTML = buildLabelHTML(tray, brandColor);
+  
+  // Show preview modal
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 8px;">Label preview · tray #${tray.trayNum}</h2>
+    <div style="font-size: 11px; color: #888; margin-bottom: 12px;">Zebra GK420d · 4" × 1.5" · 203 DPI</div>
+    <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: center;">
+      <div style="width: 4in; height: 1.5in; border: 1px solid #999; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        ${labelHTML}
+      </div>
+    </div>
+    <div style="font-size: 11px; color: #aaa; margin-bottom: 12px; padding: 10px; background: #15151c; border-radius: 8px; line-height: 1.5;">
+      <strong style="color: #FFD700;">To print:</strong> click "send to printer" → in the print dialog select your <strong>Zebra GK420d</strong>. Set paper size to <strong>4" × 1.5"</strong>, margins: none.
+    </div>
+    <div class="flex gap-8" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Close</button>
+      <button class="btn" onclick="doPrintLabel('${tray.id}')">Send to printer</button>
+    </div>
+  `);
+}
+
+function doPrintLabel(trayId) {
+  const tray = state.trays.find(t => t.id === trayId);
+  if (!tray) return;
+  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
+  const labelHTML = buildLabelHTML(tray, brandColor);
+  document.getElementById("print-area").innerHTML = labelHTML;
+  document.getElementById("print-area").classList.add("show");
+  hideModal();
+  setTimeout(() => {
+    window.print();
+    setTimeout(() => {
+      document.getElementById("print-area").classList.remove("show");
+    }, 500);
+  }, 100);
+}
+
+function buildLabelHTML(tray, brandColor) {
+  const date = new Date(tray.createdAt).toLocaleDateString();
+  const barcodeData = `TRAY-${tray.trayNum}-${tray.partNumber}`;
+  return `
+    <div style="width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; padding: 0.08in 0.15in; font-family: 'Helvetica', Arial, sans-serif; color: #000; background: #fff;">
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9pt; margin-bottom: 0.05in;">
+        <span style="font-weight: bold;">${escapeHtml(tray.projectName)}</span>
+        <span>
+          <span style="background: ${brandColor}; color: #fff; padding: 1px 6px; font-size: 8pt; font-weight: bold;">${escapeHtml(tray.brand.toUpperCase())}</span>
+          <span style="background: #000; color: #fff; padding: 1px 6px; font-size: 8pt; font-weight: bold; margin-left: 2px;">${escapeHtml(tray.generation)}</span>
+        </span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.15in; flex: 1;">
+        <div style="font-size: 56pt; font-weight: 900; line-height: 1; letter-spacing: -2px;">#${tray.trayNum}</div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 8pt; color: #555; margin-bottom: 0.02in;">PART NUMBER</div>
+          <div style="font-family: 'Courier New', monospace; font-size: 14pt; font-weight: bold; word-break: break-all; line-height: 1.05;">${escapeHtml(tray.partNumber)}</div>
+          <div style="font-size: 8pt; color: #555; margin-top: 0.04in;">capacity ${tray.capacity} · opened ${date}</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.1in; margin-top: 0.04in;">
+        <div style="display: flex; height: 0.18in; gap: 1px;">
+          ${Array.from({length: 40}, (_, i) => `<div style="width: ${(i*7) % 3 === 0 ? '2px' : '1px'}; background: #000;"></div>`).join("")}
+        </div>
+        <div style="font-family: 'Courier New', monospace; font-size: 8pt; font-weight: bold;">${escapeHtml(barcodeData)}</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ════════════════════════════════════════════════════════════════════════ */
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+function showModal(html) {
+  document.getElementById("modal-content").innerHTML = html;
+  document.getElementById("modal").classList.add("show");
+}
+function hideModal() {
+  document.getElementById("modal").classList.remove("show");
+}
+function showToast(msg, color) {
+  const c = document.getElementById("toast-container");
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.style.color = color;
+  t.style.border = `2px solid ${color}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════════════════════════════════════ */
+render(); // Show loading screen immediately
+initSupabaseState(); // Then fetch from Supabase in background
+</script>
+</body>
+</html>
