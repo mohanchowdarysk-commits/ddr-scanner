@@ -319,7 +319,23 @@ let useSupabase = !!sb;
 
 function loadLocalState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    
+    // Auto-migrate from older versions if current key is empty
+    if (!raw) {
+      const olderKeys = ["ddr_scanner_v4", "ddr_scanner_v3", "ddr_scanner_v2", "ddr_scanner_v1", "ddr_scanner"];
+      for (const oldKey of olderKeys) {
+        const oldData = localStorage.getItem(oldKey);
+        if (oldData) {
+          raw = oldData;
+          console.log(`Migrated data from ${oldKey} to ${STORAGE_KEY}`);
+          // Save immediately under the new key
+          localStorage.setItem(STORAGE_KEY, raw);
+          break;
+        }
+      }
+    }
+    
     if (!raw) return JSON.parse(JSON.stringify(DEFAULT_STATE));
     return { ...JSON.parse(JSON.stringify(DEFAULT_STATE)), ...JSON.parse(raw) };
   } catch { return JSON.parse(JSON.stringify(DEFAULT_STATE)); }
