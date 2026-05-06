@@ -1235,6 +1235,18 @@ function renderScanner() {
           </div>
         </div>
         <div id="result-card-container"></div>
+        
+        <div class="card" style="margin-top: 24px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Import CSV File</div>
+          <div style="font-size: 11px; color: #888; margin-bottom: 12px; line-height: 1.5;">
+            Upload an Excel-exported CSV to bulk import scans into this project. Your CSV must have headers (e.g. "Part Number", "Tray", "Brand").
+          </div>
+          <div class="flex items-center gap-12">
+            <input type="file" id="csv-upload" accept=".csv" style="font-size: 11px; color: #fff; width: 100%; max-width: 250px;" />
+            <button class="btn" style="padding: 6px 14px; font-size: 11px;" onclick="handleCSVImport()">Import</button>
+          </div>
+        </div>
+        
       </div>
       
       <div>
@@ -2127,19 +2139,6 @@ function renderAdminPage() {
     </div>
     
     <div style="margin-top: 24px;">
-      <h2 class="h2" style="margin-bottom: 12px;">Data Management</h2>
-      <div class="card card-tight" style="margin-bottom: 16px;">
-        <div style="padding: 16px; border-bottom: 1px solid #2a2a35;">
-          <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Import Legacy CSV</div>
-          <div style="font-size: 12px; color: #888; margin-bottom: 12px; line-height: 1.5;">
-            Upload an Excel-exported CSV to map old scans to this project. Your CSV must have headers (e.g. "Part Number", "Serial Number", "Tray", "Brand", "Gen", "QR Scan Input"). Trays will be created matching the tray numbers in the file.
-          </div>
-          <div class="flex items-center gap-12">
-            <input type="file" id="csv-upload" accept=".csv" style="font-size: 12px; color: #fff;" />
-            <button class="btn" style="padding: 6px 14px; font-size: 11px;" onclick="handleCSVImport()">Import CSV</button>
-          </div>
-        </div>
-      </div>
       <h2 class="h2" style="margin-bottom: 12px;">Danger zone</h2>
       <div class="card card-tight">
         <button class="btn-ghost" onclick="if(confirm('Clear all scans and trays for THIS project only?')){clearProjectData();}" 
