@@ -391,6 +391,7 @@ async function initSupabaseState() {
     useSupabase = false;
     stateLoaded = true;
     render();
+    setTimeout(() => showToast(`Supabase Error: ${err.message}. Using Offline Mode.`, "#ff4444"), 1000);
   }
 }
 
@@ -469,10 +470,19 @@ async function fetchDataSilent() {
 async function dbSave(table, action, data, matchField) {
   if (useSupabase && sb) {
     try {
-      if (action === 'insert') await sb.from(table).insert(data);
-      else if (action === 'update') await sb.from(table).update(data.updates).eq(matchField, data.id);
-      else if (action === 'upsert') await sb.from(table).upsert(data);
-    } catch (err) { console.warn(`DB ${action} failed:`, err); }
+      let res;
+      if (action === 'insert') res = await sb.from(table).insert(data);
+      else if (action === 'update') res = await sb.from(table).update(data.updates).eq(matchField, data.id);
+      else if (action === 'upsert') res = await sb.from(table).upsert(data);
+      
+      if (res && res.error) {
+        console.error(`DB ${action} on ${table} failed:`, res.error);
+        showToast(`DB Error: ${res.error.message}`, "#ff4444");
+      }
+    } catch (err) { 
+      console.error(`DB ${action} failed exception:`, err); 
+      showToast("Database connection error", "#ff4444");
+    }
   }
   saveLocalState();
 }
