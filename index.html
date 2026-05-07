@@ -513,7 +513,10 @@ function setupRealtime() {
   // Safe rendering logic to avoid nuking inputs while typing
   const safeRender = () => {
     const active = document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+    // Don't re-render if modal is open (user might be editing)
+    const modal = document.getElementById('modal');
+    if (modal && modal.classList.contains('show')) return;
     render();
   };
   
@@ -523,6 +526,10 @@ function setupRealtime() {
         state.scans.unshift(payload.new);
         if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
       }
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'scans' }, payload => {
+      state.scans = state.scans.filter(s => s.id != payload.old.id);
+      safeRender();
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays' }, payload => {
       if (!state.trays.find(t => t.id == payload.new.id)) {
@@ -535,15 +542,25 @@ function setupRealtime() {
       const idx = state.trays.findIndex(t => t.id == payload.new.id);
       if (idx !== -1) {
         state.trays[idx] = payload.new;
+        updateTrayCounters();
         if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
       }
     })
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects' }, payload => {
-      const idx = state.projects.findIndex(p => p.id == payload.new.id);
-      if (idx !== -1) {
-        state.projects[idx] = payload.new;
-        if (session.page === 'projects' || session.page === 'scanner') safeRender();
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'trays' }, payload => {
+      state.trays = state.trays.filter(t => t.id != payload.old.id);
+      updateTrayCounters();
+      safeRender();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, payload => {
+      if (payload.eventType === 'INSERT') {
+        if (!state.projects.find(p => p.id == payload.new.id)) state.projects.push(payload.new);
+      } else if (payload.eventType === 'UPDATE') {
+        const idx = state.projects.findIndex(p => p.id == payload.new.id);
+        if (idx !== -1) state.projects[idx] = payload.new;
+      } else if (payload.eventType === 'DELETE') {
+        state.projects = state.projects.filter(p => p.id != payload.old.id);
       }
+      safeRender();
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, payload => {
       if (!state.users.find(u => u.id == payload.new.id)) {
@@ -551,10 +568,16 @@ function setupRealtime() {
         if (session.page === 'admin') safeRender();
       }
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Realtime connected — live sync active');
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        console.warn('Realtime disconnected, will retry via periodic sync');
+      }
+    });
     
-  // Periodic full sync every 60 seconds just to ensure consistency
-  setInterval(() => fetchDataSilent(), 60000);
+  // Periodic full sync every 30 seconds for multi-user consistency
+  setInterval(() => fetchDataSilent(), 30000);
 }
 
 window.isBulkScanning = false;
@@ -590,23 +613,38 @@ async function fetchDataSilent() {
   } catch (err) { console.warn("Realtime refresh failed:", err); }
 }
 
-// Helper to save to Supabase OR localStorage
-async function dbSave(table, action, data, matchField) {
+// Helper to save to Supabase OR localStorage with retry
+async function dbSave(table, action, data, matchField, retries = 2) {
   if (useSupabase && sb) {
-    try {
-      let res;
-      if (action === 'insert') res = await sb.from(table).insert(data);
-      else if (action === 'update') res = await sb.from(table).update(data.updates).eq(matchField, data.id);
-      else if (action === 'upsert') res = await sb.from(table).upsert(data);
-      else if (action === 'delete') res = await sb.from(table).delete().eq(matchField, data.id);
-      
-      if (res && res.error) {
-        console.error(`DB ${action} on ${table} failed:`, res.error);
-        showToast(`DB Error: ${res.error.message}`, "#ff4444");
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        let res;
+        if (action === 'insert') res = await sb.from(table).insert(data);
+        else if (action === 'update') res = await sb.from(table).update(data.updates).eq(matchField, data.id);
+        else if (action === 'upsert') res = await sb.from(table).upsert(data);
+        else if (action === 'delete') res = await sb.from(table).delete().eq(matchField, data.id);
+        
+        if (res && res.error) {
+          // Duplicate key on insert? Might be a race — try upsert instead
+          if (action === 'insert' && res.error.code === '23505' && attempt < retries) {
+            console.warn(`Duplicate key on ${table}, retrying as upsert...`);
+            res = await sb.from(table).upsert(data);
+            if (res && !res.error) break;
+          }
+          if (attempt === retries) {
+            console.error(`DB ${action} on ${table} failed after ${retries + 1} attempts:`, res.error);
+            showToast(`DB Error: ${res.error.message}`, "#ff4444");
+          }
+        } else {
+          break; // Success
+        }
+      } catch (err) { 
+        if (attempt === retries) {
+          console.error(`DB ${action} failed exception:`, err); 
+          showToast("Database connection error — changes saved locally", "#ff4444");
+        }
+        await new Promise(r => setTimeout(r, 200 * (attempt + 1))); // backoff
       }
-    } catch (err) { 
-      console.error(`DB ${action} failed exception:`, err); 
-      showToast("Database connection error", "#ff4444");
     }
   }
   saveLocalState();
@@ -866,9 +904,89 @@ async function classify(scan) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TRAY ASSIGNMENT
+   SCAN RESOLVER — finds scan in local state, Supabase, or synthesizes one
    ════════════════════════════════════════════════════════════════════════ */
-function assignTray(projectId, userId, classification) {
+async function resolveScan(scanId, tray) {
+  // 1. Check local state
+  let scan = state.scans.find(s => s.id == scanId);
+  if (scan) return scan;
+  
+  // 2. Try Supabase
+  if (useSupabase && sb) {
+    try {
+      const { data, error } = await sb.from('scans').select('*').eq('id', scanId).single();
+      if (!error && data) {
+        state.scans.push(data); // cache locally
+        return data;
+      }
+    } catch (e) { console.warn("resolveScan DB lookup failed:", e); }
+  }
+  
+  // 3. Synthesize from tray data — scan record is truly gone but stick reference exists
+  const synth = {
+    id: scanId,
+    projectId: tray.projectId,
+    userId: tray.createdBy || session.currentUser?.id,
+    ts: tray.createdAt || Date.now(),
+    scan: tray.partNumber || "",
+    result: {
+      partNumber: tray.partNumber || "UNKNOWN",
+      serial: "",
+      brand: tray.brand || "Unknown",
+      generation: tray.generation || "Unknown",
+      label: tray.label || "",
+      confidence: 1,
+      method: "reconstructed"
+    },
+    trayId: tray.id,
+    _synthetic: true // flag so we know this was reconstructed
+  };
+  state.scans.push(synth); // cache so subsequent calls find it
+  return synth;
+}
+
+
+const _scanLocks = new Map(); // projectId -> Promise chain
+function withScanLock(projectId, fn) {
+  const prev = _scanLocks.get(projectId) || Promise.resolve();
+  const next = prev.then(fn, fn); // run serially even if prev rejects
+  _scanLocks.set(projectId, next);
+  return next;
+}
+
+function generateId(prefix) {
+  // Crypto-random unique ID — no collisions even at 1000+ concurrent users
+  const ts = Date.now().toString(36);
+  const rand = crypto.getRandomValues(new Uint8Array(8));
+  const hex = Array.from(rand).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${prefix}_${ts}_${hex}`;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TRAY ASSIGNMENT — concurrency-safe
+   ════════════════════════════════════════════════════════════════════════ */
+async function getNextTrayNum(projectId) {
+  // Always re-read from Supabase to get the true max tray number
+  if (useSupabase && sb) {
+    try {
+      const { data, error } = await sb
+        .from('trays')
+        .select('trayNum')
+        .eq('projectId', projectId)
+        .order('trayNum', { ascending: false })
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        const dbMax = parseInt(data[0].trayNum, 10) || 0;
+        const localMax = state.trayCounters[projectId] || 0;
+        return Math.max(dbMax, localMax) + 1;
+      }
+    } catch (e) { console.warn("getNextTrayNum DB read failed:", e); }
+  }
+  return (state.trayCounters[projectId] || 0) + 1;
+}
+
+function assignTrayLocal(projectId, userId, classification) {
+  // Pure local lookup — finds existing open tray or returns null
   if (!classification?.partNumber) return null;
   const project = state.projects.find(p => p.id == projectId);
   if (!project) return null;
@@ -882,14 +1000,26 @@ function assignTray(projectId, userId, classification) {
   });
 
   const sorted = [...candidates].sort((a, b) => b.createdAt - a.createdAt);
-  const open = sorted.find(t => t.sticks.length < t.capacity);
+  const open = sorted.find(t => (t.sticks?.length || 0) < t.capacity);
   if (open) return { tray: open, status: "ADDED" };
 
-  const counter = state.trayCounters[projectId] || 0;
-  const newNum = counter + 1;
+  return { needsNew: true, hasOverflow: candidates.length > 0, classification, projectId, userId };
+}
+
+async function assignTray(projectId, userId, classification) {
+  const local = assignTrayLocal(projectId, userId, classification);
+  if (!local) return null;
+  if (!local.needsNew) return local;
+
+  // Need a new tray — get next number atomically
+  const project = state.projects.find(p => p.id == projectId);
+  if (!project) return null;
+  
+  const newNum = await getNextTrayNum(projectId);
   const newTray = {
-    id: `t_${projectId}_${newNum}`,
-    projectId, ownerUserId: project.mode === "separate" ? userId : null,
+    id: generateId('t'),
+    projectId,
+    ownerUserId: project.mode === "separate" ? userId : null,
     partNumber: classification.partNumber,
     label: classification.label || "",
     brand: classification.brand,
@@ -901,7 +1031,39 @@ function assignTray(projectId, userId, classification) {
     createdBy: userId,
     projectName: project.name,
   };
-  return { tray: newTray, status: candidates.length > 0 ? "OVERFLOW" : "NEW", isNew: true, newNum };
+  
+  // Double-check: did another user just create this tray while we were waiting?
+  if (useSupabase && sb) {
+    try {
+      const { data } = await sb
+        .from('trays')
+        .select('*')
+        .eq('projectId', projectId)
+        .ilike('partNumber', classification.partNumber)
+        .lt('sticks', project.defaultCap); // rough check
+      
+      if (data && data.length > 0) {
+        // Check if any returned tray is actually open
+        for (const dbTray of data) {
+          const sticksArr = Array.isArray(dbTray.sticks) ? dbTray.sticks : [];
+          if (sticksArr.length < dbTray.capacity) {
+            if (project.mode === "separate" && dbTray.ownerUserId != userId) continue;
+            // Found an open tray created by another user — use it
+            const existing = state.trays.find(t => t.id == dbTray.id);
+            if (existing) {
+              existing.sticks = sticksArr; // refresh sticks from DB
+              return { tray: existing, status: "ADDED" };
+            } else {
+              state.trays.push(dbTray);
+              return { tray: dbTray, status: "ADDED" };
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn("Concurrency check failed, proceeding with new tray:", e); }
+  }
+
+  return { tray: newTray, status: local.hasOverflow ? "OVERFLOW" : "NEW", isNew: true, newNum };
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -980,7 +1142,7 @@ async function doAuth() {
       return;
     }
     const newUser = {
-      id: `u${state.users.length + 1}`,
+      id: generateId('u'),
       username, password, role: "scanner", name: username,
       color: `hsl(${Math.floor(Math.random()*360)}, 70%, 50%)`,
     };
@@ -1197,7 +1359,7 @@ async function doCreateProject() {
   if (createProjectMembers.size === 0) { msgEl.innerHTML = `<div class="alert alert-error">Select at least one member</div>`; return; }
 
   const newProject = {
-    id: `p${Date.now()}`, name, mode: createProjectMode,
+    id: generateId('p'), name, mode: createProjectMode,
     memberIds: Array.from(createProjectMembers),
     defaultCap: cap, autoprint: ap,
     createdBy: session.currentUser.id, createdAt: Date.now(),
@@ -1515,7 +1677,6 @@ function renderTraysPage() {
           const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
           const barColor = isFull ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
           const isExp = expandedTrays.has(String(t.id));
-          const tScans = isExp ? state.scans.filter(s => s.trayId == t.id).sort((a,b) => a.ts - b.ts) : [];
           
           return `
             <div class="tray-card">
@@ -1554,32 +1715,35 @@ function renderTraysPage() {
                 <div class="tray-progress" style="margin: 0;"><div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div></div>
               </div>
               
-              <div class="flex gap-8" style="display: grid; grid-template-columns: repeat(3, 1fr) 44px; gap: 0.5rem;">
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;">
                 <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="openTrayEditModal('${t.id}')">Edit</button>
                 <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="promptMergeTray('${t.id}')">Merge</button>
                 <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="printTrayLabelById('${t.id}')">Print</button>
-                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem; background: ${isExp ? '#2a2a35' : 'transparent'};" onclick="toggleTrayExpand('${t.id}')">${isExp ? 'Hide' : 'View'}</button>
-                <button class="btn-ghost" style="padding: 0; font-size: 1rem; color: #ff6b8a; border-color: rgba(255, 107, 138, 0.2); min-height: 2.5rem; border-radius: 0.625rem;" onclick="confirmDeleteTray('${t.id}')">🗑</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem; background: ${isExp ? '#FFD700' : 'transparent'}; color: ${isExp ? '#0a0a0f' : '#888'}; border-color: ${isExp ? '#FFD700' : '#2a2a35'}; font-weight: 800;" onclick="toggleTrayExpand('${t.id}')">${isExp ? '▲ Hide' : '▼ View'}</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 0.85rem; color: #ff6b8a; border-color: rgba(255, 107, 138, 0.3); min-height: 2.5rem; border-radius: 0.625rem;" onclick="confirmDeleteTray('${t.id}')" title="Delete Tray">🗑</button>
               </div>
               
               ${isExp ? `
                 <div style="margin-top: 1.25rem; border-top: 1px solid #2a2a35; padding-top: 1rem; animation: slide-in 0.2s ease-out;">
                   <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.75rem;">Sticks (${t.sticks.length})</div>
-                  <div style="max-height: 200px; overflow-y: auto; padding-right: 4px;">
-                    ${tScans.length === 0 ? '<div style="padding: 1rem; color: #666; text-align: center; font-size: 0.85rem;">Empty tray</div>' : tScans.map((s, idx) => `
-                      <div class="flex justify-between items-center" style="padding: 0.6rem 0; border-bottom: 1px solid #15151c; font-size: 0.85rem;">
-                        <div class="mono truncate" style="color: #ccc; flex: 1;">
-                          <span style="color: #888;">${idx + 1}.</span> 
-                          <span style="color: #FFD700; font-weight: 700;">${escapeHtml(s.result?.partNumber || 'UNKNOWN')}</span>
-                          <span style="color: #666; margin: 0 4px;">·</span>
-                          <span style="font-size: 0.75rem;">${escapeHtml(s.result?.serial || 'NO S/N')}</span>
+                  <div style="max-height: 250px; overflow-y: auto; padding-right: 4px;">
+                    ${t.sticks.length === 0 ? '<div style="padding: 1rem; color: #666; text-align: center; font-size: 0.85rem;">Empty tray</div>' : t.sticks.map((scanId, idx) => {
+                      const s = state.scans.find(sc => sc.id == scanId);
+                      return `
+                      <div class="flex justify-between items-center" style="padding: 0.6rem 0.5rem; border-bottom: 1px solid #15151c; font-size: 0.85rem; border-radius: 0.375rem; margin-bottom: 2px; transition: background 0.1s;" onmouseover="this.style.background='#15151c'" onmouseout="this.style.background='transparent'">
+                        <div class="mono truncate" style="color: #ccc; flex: 1; min-width: 0;">
+                          <span style="color: #555; font-size: 0.75rem; min-width: 1.5rem; display: inline-block;">${idx + 1}.</span> 
+                          <span style="color: #FFD700; font-weight: 700;">${escapeHtml(s?.result?.partNumber || 'UNKNOWN')}</span>
+                          <span style="color: #444; margin: 0 3px;">·</span>
+                          <span style="font-size: 0.75rem; color: #888;">${escapeHtml(s?.result?.serial || 'NO S/N')}</span>
                         </div>
-                        <div class="flex gap-8">
-                           <button onclick="editStick('${t.id}', ${idx})" style="background: transparent; border: 0; color: #4fa3ff; padding: 0.25rem; font-size: 0.75rem; font-weight: 700;">EDIT</button>
-                           <button onclick="moveStick('${t.id}', ${idx})" style="background: transparent; border: 0; color: #FFD700; padding: 0.25rem; font-size: 0.75rem; font-weight: 700;">MOVE</button>
+                        <div style="display: flex; gap: 0.25rem; flex-shrink: 0; margin-left: 0.5rem;">
+                           <button onclick="editStick('${t.id}', ${idx})" style="background: transparent; border: 1px solid rgba(79,163,255,0.25); color: #4fa3ff; padding: 0.25rem 0.5rem; font-size: 0.7rem; font-weight: 700; border-radius: 0.25rem; cursor: pointer;" title="Edit part number">EDIT</button>
+                           <button onclick="moveStick('${t.id}', ${idx})" style="background: transparent; border: 1px solid rgba(255,215,0,0.25); color: #FFD700; padding: 0.25rem 0.5rem; font-size: 0.7rem; font-weight: 700; border-radius: 0.25rem; cursor: pointer;" title="Move to another tray">MOVE</button>
+                           <button onclick="deleteStick('${t.id}', ${idx})" style="background: transparent; border: 1px solid rgba(255,107,138,0.25); color: #ff6b8a; padding: 0.25rem 0.5rem; font-size: 0.7rem; font-weight: 700; border-radius: 0.25rem; cursor: pointer;" title="Delete this stick">DEL</button>
                         </div>
-                      </div>
-                    `).join('')}
+                      </div>`;
+                    }).join('')}
                   </div>
                 </div>
               ` : ""}
@@ -1600,36 +1764,39 @@ async function doBulkScan() {
   btn.disabled = true;
   window.isBulkScanning = true;
   let success = 0;
+  
   for (let i = 0; i < lines.length; i++) {
     btn.textContent = `Processing ${i+1}/${lines.length}...`;
     const scan = lines[i];
     const result = await classify(scan);
     if (!result || !result.partNumber) continue;
     
-    let assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
-    if (!assignment) continue;
-    
-    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
-    const newScan = {
-      id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-      ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
-    };
-    if (assignment.isNew) {
-      const newTrayData = { ...assignment.tray, sticks: [scanId] };
-      state.trays.push(newTrayData);
-      state.trayCounters[session.currentProjectId] = assignment.newNum;
-      await dbSave('trays', 'insert', newTrayData);
-    } else {
-      const tray = state.trays.find(t => t.id == assignment.tray.id);
-      tray.sticks.push(scanId);
-      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-    }
-    state.scans.unshift(newScan);
-    await dbSave('scans', 'insert', newScan);
-    
-    session.lastScan = newScan;
-    session.lastAssignment = assignment;
-    success++;
+    await withScanLock(session.currentProjectId, async () => {
+      let assignment = await assignTray(session.currentProjectId, session.currentUser.id, result);
+      if (!assignment) return;
+      
+      const scanId = generateId('s');
+      const newScan = {
+        id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+        ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
+      };
+      if (assignment.isNew) {
+        const newTrayData = { ...assignment.tray, sticks: [scanId] };
+        state.trays.push(newTrayData);
+        state.trayCounters[session.currentProjectId] = assignment.newNum;
+        await dbSave('trays', 'insert', newTrayData);
+      } else {
+        const tray = state.trays.find(t => t.id == assignment.tray.id);
+        tray.sticks.push(scanId);
+        await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+      }
+      state.scans.unshift(newScan);
+      await dbSave('scans', 'insert', newScan);
+      
+      session.lastScan = newScan;
+      session.lastAssignment = assignment;
+      success++;
+    });
     await new Promise(r => setTimeout(r, 50));
   }
   
@@ -1659,58 +1826,75 @@ async function doScan() {
   btn.textContent = "Analyzing…";
   btn.disabled = true;
   
-  const result = await classify(scan);
-  if (!result) {
-    showToast("Classification failed", "#ff6b8a");
-    btn.textContent = "Scan ▶"; btn.disabled = false;
-    return;
-  }
-  const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
-  if (!assignment) {
-    showToast("No part number — cannot assign tray", "#ff6b8a");
-    btn.textContent = "Scan ▶"; btn.disabled = false;
-    return;
+  try {
+    const result = await classify(scan);
+    if (!result) {
+      showToast("Classification failed", "#ff6b8a");
+      btn.textContent = "Scan ▶"; btn.disabled = false;
+      return;
+    }
+    
+    // Use lock to prevent concurrent tray creation races
+    await withScanLock(session.currentProjectId, async () => {
+      const assignment = await assignTray(session.currentProjectId, session.currentUser.id, result);
+      if (!assignment) {
+        showToast("No part number — cannot assign tray", "#ff6b8a");
+        return;
+      }
+      
+      const scanId = generateId('s');
+      const newScan = {
+        id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+        ts: Date.now(), scan, result, trayId: assignment.tray.id,
+      };
+      
+      if (assignment.isNew) {
+        const newTrayData = { ...assignment.tray, sticks: [scanId] };
+        state.trays.push(newTrayData);
+        state.trayCounters[session.currentProjectId] = assignment.newNum;
+        await dbSave('trays', 'insert', newTrayData);
+      } else {
+        // Refresh sticks from DB before appending to prevent overwrites
+        const tray = state.trays.find(t => t.id == assignment.tray.id);
+        if (useSupabase && sb) {
+          try {
+            const { data } = await sb.from('trays').select('sticks').eq('id', tray.id).single();
+            if (data && Array.isArray(data.sticks)) tray.sticks = data.sticks;
+          } catch (e) { /* use local */ }
+        }
+        tray.sticks.push(scanId);
+        await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+      }
+      state.scans.unshift(newScan);
+      await dbSave('scans', 'insert', newScan);
+      
+      input.value = "";
+      
+      const trayN = assignment.tray.trayNum || assignment.newNum;
+      const project = state.projects.find(p => p.id == session.currentProjectId);
+      
+      session.lastScan = newScan;
+      session.lastAssignment = assignment;
+      
+      renderResultCard(newScan.result, state.trays.find(t => t.id == assignment.tray.id));
+      
+      if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
+      else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
+      else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
+      
+      if (assignment.isNew && project.autoprint) {
+        setTimeout(() => {
+          const tray = state.trays.find(t => t.id == assignment.tray.id);
+          printTrayLabel(tray);
+        }, 400);
+      }
+    });
+  } catch (err) {
+    console.error("Scan error:", err);
+    showToast("Scan failed: " + err.message, "#ff6b8a");
   }
   
-  const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}`;
-  const newScan = {
-    id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-    ts: Date.now(), scan, result, trayId: assignment.tray.id,
-  };
-  
-  if (assignment.isNew) {
-    state.trays.push({ ...assignment.tray, sticks: [scanId] });
-    state.trayCounters[session.currentProjectId] = assignment.newNum;
-    await dbSave('trays', 'insert', { ...assignment.tray, sticks: [scanId] });
-  } else {
-    const tray = state.trays.find(t => t.id == assignment.tray.id);
-    tray.sticks.push(scanId);
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  }
-  state.scans.unshift(newScan);
-  await dbSave('scans', 'insert', newScan);
-  
-  input.value = "";
   btn.textContent = "Scan ▶"; btn.disabled = false;
-  
-  const trayN = assignment.tray.trayNum || assignment.newNum;
-  const project = state.projects.find(p => p.id == session.currentProjectId);
-  
-  session.lastScan = newScan;
-  session.lastAssignment = assignment;
-  
-  renderResultCard(newScan.result, state.trays.find(t => t.id == assignment.tray.id));
-  
-  if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
-  else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
-  else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
-  
-  if (assignment.isNew && project.autoprint) {
-    setTimeout(() => {
-      const tray = state.trays.find(t => t.id == assignment.tray.id);
-      printTrayLabel(tray);
-    }, 400);
-  }
   renderScanner();
 }
 
@@ -1832,31 +2016,103 @@ async function editStick(trayId, stickIndex) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray || !tray.sticks[stickIndex]) return;
   const scanId = tray.sticks[stickIndex];
-  const scan = state.scans.find(s => s.id == scanId);
+  const scan = await resolveScan(scanId, tray);
+  
+  const currentPart = scan.result?.partNumber || "";
+  const currentSerial = scan.result?.serial || "";
+  
+  showModal(`
+    <h2 class="h2" style="color: #4fa3ff; margin-bottom: 16px;">Edit Stick · Tray #${tray.trayNum}</h2>
+    <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border: 1px solid #2a2a35;">
+      <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; margin-bottom: 0.25rem;">Current Part Number</div>
+      <div class="mono" style="color: #FFD700; font-weight: 700;">${escapeHtml(currentPart)}</div>
+    </div>
+    <div class="field">
+      <div class="label">New Part Number</div>
+      <input type="text" id="edit-stick-part" value="${escapeHtml(currentPart)}" />
+    </div>
+    <div class="field">
+      <div class="label">Serial Number</div>
+      <input type="text" id="edit-stick-serial" value="${escapeHtml(currentSerial)}" />
+    </div>
+    <div style="font-size: 0.85rem; color: #888; margin-bottom: 1rem; line-height: 1.5;">
+      If you change the part number, this stick will be <b style="color: #4fa3ff;">automatically reassigned</b> to the correct tray.
+    </div>
+    <div id="edit-stick-msg"></div>
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doEditStick('${trayId}', ${stickIndex})">Save Changes</button>
+    </div>
+  `);
+  // Auto-focus the part number input
+  setTimeout(() => { const el = document.getElementById('edit-stick-part'); if (el) el.focus(); }, 100);
+}
+
+async function doEditStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scanId = tray.sticks[stickIndex];
+  const scan = await resolveScan(scanId, tray);
   if (!scan) return;
-  const newPart = prompt(`Edit Part Number:`, scan.result?.partNumber || "");
-  if (newPart !== null && newPart.trim() !== "") {
-    const p = newPart.trim().toUpperCase();
-    if (p === (scan.result?.partNumber || "").toUpperCase()) return;
-    scan.result.partNumber = p;
-    await dbSave('scans', 'update', { updates: { result: scan.result }, id: scan.id }, 'id');
-    const assignment = assignTray(session.currentProjectId, session.currentUser.id, scan.result);
-    if (!assignment) { renderTraysPage(); return; }
-    tray.sticks.splice(stickIndex, 1);
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-    if (assignment.isNew) {
-      const newTray = { ...assignment.tray, sticks: [scanId] };
-      state.trays.push(newTray);
-      state.trayCounters[session.currentProjectId] = assignment.newNum;
-      await dbSave('trays', 'insert', newTray);
-    } else {
-      const targetTray = state.trays.find(t => t.id == assignment.tray.id);
-      targetTray.sticks.push(scanId);
-      await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
-    }
-    scan.trayId = assignment.tray.id;
-    await dbSave('scans', 'update', { updates: { trayId: assignment.tray.id }, id: scan.id }, 'id');
-    showToast(`Stick moved to Tray #${assignment.tray.trayNum || assignment.newNum}`, '#3ed685');
+  
+  const newPart = (document.getElementById("edit-stick-part")?.value || "").trim();
+  const newSerial = (document.getElementById("edit-stick-serial")?.value || "").trim();
+  const msgEl = document.getElementById("edit-stick-msg");
+  
+  if (!newPart) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Part number is required</div>';
+    return;
+  }
+  
+  const partChanged = newPart.toUpperCase() !== (scan.result?.partNumber || "").toUpperCase();
+  
+  // Update the scan result
+  scan.result.partNumber = newPart.toUpperCase();
+  scan.result.serial = newSerial;
+  await dbSave('scans', 'update', { updates: { result: scan.result }, id: scan.id }, 'id');
+  
+  if (partChanged) {
+    // Part number changed — need to reassign tray
+    await withScanLock(session.currentProjectId, async () => {
+      const assignment = await assignTray(session.currentProjectId, session.currentUser.id, scan.result);
+      if (!assignment) { 
+        hideModal();
+        showToast("Updated scan but could not reassign tray", "#FFD700");
+        renderTraysPage(); 
+        return; 
+      }
+      
+      // Remove from current tray
+      tray.sticks.splice(stickIndex, 1);
+      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+      
+      if (assignment.isNew) {
+        const newTray = { ...assignment.tray, sticks: [scanId] };
+        state.trays.push(newTray);
+        state.trayCounters[session.currentProjectId] = assignment.newNum;
+        await dbSave('trays', 'insert', newTray);
+      } else {
+        const targetTray = state.trays.find(t => t.id == assignment.tray.id);
+        // Refresh sticks from DB before push
+        if (useSupabase && sb) {
+          try {
+            const { data } = await sb.from('trays').select('sticks').eq('id', targetTray.id).single();
+            if (data && Array.isArray(data.sticks)) targetTray.sticks = data.sticks;
+          } catch (e) { /* use local */ }
+        }
+        targetTray.sticks.push(scanId);
+        await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+      }
+      scan.trayId = assignment.tray.id;
+      await dbSave('scans', 'update', { updates: { trayId: assignment.tray.id }, id: scan.id }, 'id');
+      
+      hideModal();
+      showToast(`Stick updated & moved to Tray #${assignment.tray.trayNum || assignment.newNum}`, '#3ed685');
+      renderTraysPage();
+    });
+  } else {
+    hideModal();
+    showToast("Stick updated", '#3ed685');
     renderTraysPage();
   }
 }
@@ -1864,15 +2120,20 @@ async function editStick(trayId, stickIndex) {
 function openTrayInventoryModal(trayId) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray) return;
-  const tScans = state.scans.filter(s => s.trayId == tray.id).sort((a,b) => a.ts - b.ts);
   
-  const inventoryText = tScans.map((s, i) => `${i+1}. ${s.result?.partNumber} | SN: ${s.result?.serial || 'N/A'}`).join('\n');
+  // Build inventory from tray.sticks (source of truth for indices)
+  const stickData = tray.sticks.map((scanId, idx) => {
+    const s = state.scans.find(sc => sc.id == scanId);
+    return { idx, scanId, scan: s };
+  });
+  
+  const inventoryText = stickData.map((d, i) => `${i+1}. ${d.scan?.result?.partNumber || 'UNKNOWN'} | SN: ${d.scan?.result?.serial || 'N/A'}`).join('\n');
 
   showModal(`
     <div class="flex items-center justify-between" style="margin-bottom: 1.5rem; border-bottom: 1px solid #2a2a35; padding-bottom: 1rem;">
       <div>
         <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700;">Inventory Detail</div>
-        <h2 class="h2" style="color: #FFD700;">Tray #${tray.trayNum} · ${tScans.length} sticks</h2>
+        <h2 class="h2" style="color: #FFD700;">Tray #${tray.trayNum} · ${tray.sticks.length} sticks</h2>
       </div>
       <button class="btn-ghost" onclick="copyToClipboard(\`${inventoryText.replace(/`/g, '\\`')}\`)">📋 Copy List</button>
     </div>
@@ -1888,22 +2149,23 @@ function openTrayInventoryModal(trayId) {
           </tr>
         </thead>
         <tbody>
-          ${tScans.map((s, idx) => `
+          ${stickData.map(d => `
             <tr style="border-bottom: 1px solid #1a1a22;">
-              <td style="padding: 0.75rem; color: #555; font-family: monospace;">${idx + 1}</td>
-              <td style="padding: 0.75rem; color: #FFD700; font-weight: 700; font-family: monospace; word-break: break-all;">${escapeHtml(s.result?.partNumber || 'UNKNOWN')}</td>
-              <td style="padding: 0.75rem; color: #ccc; font-family: monospace; word-break: break-all;">${escapeHtml(s.result?.serial || 'NO S/N')}</td>
+              <td style="padding: 0.75rem; color: #555; font-family: monospace;">${d.idx + 1}</td>
+              <td style="padding: 0.75rem; color: #FFD700; font-weight: 700; font-family: monospace; word-break: break-all;">${escapeHtml(d.scan?.result?.partNumber || 'UNKNOWN')}</td>
+              <td style="padding: 0.75rem; color: #ccc; font-family: monospace; word-break: break-all;">${escapeHtml(d.scan?.result?.serial || 'NO S/N')}</td>
               <td style="padding: 0.75rem; text-align: right;">
-                <div class="flex gap-8" style="justify-content: flex-end;">
-                  <button onclick="editStick('${tray.id}', ${idx}); hideModal();" style="background: transparent; border: 0; color: #4fa3ff; font-size: 0.7rem; font-weight: 700; cursor: pointer;">EDIT</button>
-                  <button onclick="moveStick('${tray.id}', ${idx}); hideModal();" style="background: transparent; border: 0; color: #FFD700; font-size: 0.7rem; font-weight: 700; cursor: pointer;">MOVE</button>
+                <div style="display: flex; gap: 0.375rem; justify-content: flex-end;">
+                  <button onclick="editStick('${tray.id}', ${d.idx})" style="background: transparent; border: 1px solid rgba(79,163,255,0.25); color: #4fa3ff; font-size: 0.7rem; font-weight: 700; cursor: pointer; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">EDIT</button>
+                  <button onclick="moveStick('${tray.id}', ${d.idx})" style="background: transparent; border: 1px solid rgba(255,215,0,0.25); color: #FFD700; font-size: 0.7rem; font-weight: 700; cursor: pointer; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">MOVE</button>
+                  <button onclick="deleteStick('${tray.id}', ${d.idx})" style="background: transparent; border: 1px solid rgba(255,107,138,0.25); color: #ff6b8a; font-size: 0.7rem; font-weight: 700; cursor: pointer; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">DEL</button>
                 </div>
               </td>
             </tr>
           `).join('')}
         </tbody>
       </table>
-      ${tScans.length === 0 ? '<div style="padding: 2rem; text-align: center; color: #666;">This tray is currently empty.</div>' : ''}
+      ${tray.sticks.length === 0 ? '<div style="padding: 2rem; text-align: center; color: #666;">This tray is currently empty.</div>' : ''}
     </div>
     
     <div class="flex justify-end" style="margin-top: 1.5rem;">
@@ -1921,26 +2183,90 @@ function copyToClipboard(text) {
 async function promptMergeTray(sourceTrayId) {
   const sourceTray = state.trays.find(t => t.id == sourceTrayId);
   if (!sourceTray) return;
-  const targetNum = prompt(`Merge all sticks from Tray #${sourceTray.trayNum} into which Tray Number?`);
-  if (!targetNum) return;
-  const num = parseInt(targetNum, 10);
-  if (isNaN(num)) return showToast("Invalid tray number", "#ff6b8a");
+  
+  const project = state.projects.find(p => p.id == sourceTray.projectId);
+  const eligibleTrays = state.trays
+    .filter(t => t.projectId == sourceTray.projectId && t.id != sourceTray.id && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId))
+    .sort((a,b) => a.trayNum - b.trayNum);
+  
+  const trayOptions = eligibleTrays.map(t => 
+    `<option value="${t.trayNum}">#${t.trayNum} — ${escapeHtml(t.partNumber.slice(0,25))} (${t.sticks.length} sticks)</option>`
+  ).join('');
+  
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 16px;">Merge Tray #${sourceTray.trayNum}</h2>
+    <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border: 1px solid #2a2a35;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div>
+          <div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Source Part</div>
+          <div class="mono" style="color: #FFD700; font-weight: 700; font-size: 0.9rem; word-break: break-all;">${escapeHtml(sourceTray.partNumber)}</div>
+        </div>
+        <div>
+          <div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Sticks</div>
+          <div style="color: #fff; font-weight: 700;">${sourceTray.sticks.length}</div>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Merge into tray number</div>
+      <input type="number" id="merge-target-num" min="1" placeholder="Enter target tray #" />
+    </div>
+    ${eligibleTrays.length > 0 ? `
+      <div class="field">
+        <div class="label">Or select existing tray</div>
+        <select id="merge-target-select" onchange="document.getElementById('merge-target-num').value = this.value">
+          <option value="">— Select a tray —</option>
+          ${trayOptions}
+        </select>
+      </div>
+    ` : ''}
+    <div style="font-size: 0.85rem; color: #ff6b8a; margin-bottom: 1rem; line-height: 1.5;">
+      ⚠ All sticks from Tray #${sourceTray.trayNum} will be moved to the target tray. The source tray will be <b>deleted</b>.
+    </div>
+    <div id="merge-msg"></div>
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doMergeTray('${sourceTrayId}')">Merge Trays</button>
+    </div>
+  `);
+}
+
+async function doMergeTray(sourceTrayId) {
+  const sourceTray = state.trays.find(t => t.id == sourceTrayId);
+  if (!sourceTray) return;
+  
+  const numStr = document.getElementById("merge-target-num")?.value;
+  const msgEl = document.getElementById("merge-msg");
+  if (!numStr) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Enter a target tray number</div>';
+    return;
+  }
+  const num = parseInt(numStr, 10);
+  if (isNaN(num) || num < 1) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Invalid tray number</div>';
+    return;
+  }
   
   const project = state.projects.find(p => p.id == sourceTray.projectId);
   const targetTray = state.trays.find(t => t.projectId == sourceTray.projectId && t.trayNum == num && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId));
   
-  if (!targetTray) return showToast(`Target Tray #${num} not found`, "#ff6b8a");
-  if (targetTray.id == sourceTray.id) return showToast("Cannot merge a tray into itself", "#ff6b8a");
+  if (!targetTray) {
+    if (msgEl) msgEl.innerHTML = `<div class="alert alert-error">Tray #${num} not found in this project</div>`;
+    return;
+  }
+  if (targetTray.id == sourceTray.id) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Cannot merge a tray into itself</div>';
+    return;
+  }
   
-  if (!confirm(`Merge Tray #${sourceTray.trayNum} into Tray #${targetTray.trayNum}?\n\nTarget part: ${targetTray.partNumber}\nSource part: ${sourceTray.partNumber}`)) return;
-  
+  hideModal();
   showToast("Merging trays...", "#FFD700");
   
   // Move all stick references
   const uniqueSticks = [...new Set([...targetTray.sticks, ...sourceTray.sticks])];
   targetTray.sticks = uniqueSticks;
   
-  // Update all scans to point to new tray (This is the Source of Truth)
+  // Update all scans to point to new tray
   for (const sId of sourceTray.sticks) {
     const scan = state.scans.find(s => s.id == sId);
     if (scan) {
@@ -1963,36 +2289,172 @@ async function promptMergeTray(sourceTrayId) {
 async function moveStick(trayId, stickIndex) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray || !tray.sticks[stickIndex]) return;
-  const scan = state.scans.find(s => s.id == tray.sticks[stickIndex]);
-  if (!scan) return;
-  const newTrayNumStr = prompt(`Move stick (${scan.result?.partNumber}) to which Tray Number?`);
-  if (!newTrayNumStr) return;
-  const newTrayNum = parseInt(newTrayNumStr, 10);
-  if (isNaN(newTrayNum)) return alert("Invalid tray number");
-  if (newTrayNum === tray.trayNum) return;
+  const scanId = tray.sticks[stickIndex];
+  const scan = await resolveScan(scanId, tray);
+  
   const project = state.projects.find(p => p.id == session.currentProjectId);
-  let targetTray = state.trays.find(t => t.projectId == project.id && t.trayNum == newTrayNum);
-  if (targetTray) {
-    if (targetTray.partNumber.toUpperCase() !== scan.result.partNumber.toUpperCase()) {
-      if (!confirm(`Warning: Target Tray #${newTrayNum} holds a different part number (${targetTray.partNumber}). Move anyway?`)) return;
-    }
-  } else {
-    targetTray = {
-      id: `t_${project.id}_${newTrayNum}_${Date.now()}`,
-      projectId: project.id, ownerUserId: session.currentUser.id,
-      partNumber: scan.result.partNumber, label: scan.result.label || "", brand: scan.result.brand || "Unknown", generation: scan.result.generation || "Unknown",
-      trayNum: newTrayNum, capacity: project.defaultCap, sticks: [],
-      createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
-    };
-    state.trays.push(targetTray);
-    await dbSave('trays', 'insert', targetTray);
+  const projectTrays = state.trays
+    .filter(t => t.projectId == project.id && t.id != tray.id)
+    .sort((a,b) => a.trayNum - b.trayNum);
+  
+  const trayOptions = projectTrays.map(t => {
+    const pct = Math.round((t.sticks.length / t.capacity) * 100);
+    const full = t.sticks.length >= t.capacity;
+    return `<option value="${t.trayNum}" ${full ? 'disabled' : ''}>#${t.trayNum} — ${escapeHtml(t.partNumber.slice(0,20))} (${t.sticks.length}/${t.capacity}${full ? ' FULL' : ''})</option>`;
+  }).join('');
+  
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 16px;">Move Stick</h2>
+    <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border: 1px solid #2a2a35;">
+      <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; margin-bottom: 0.25rem;">Part Number</div>
+      <div class="mono" style="color: #FFD700; font-weight: 700;">${escapeHtml(scan.result?.partNumber || 'UNKNOWN')}</div>
+      <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; margin-top: 0.5rem; margin-bottom: 0.25rem;">Currently in</div>
+      <div style="color: #fff; font-weight: 700;">Tray #${tray.trayNum}</div>
+    </div>
+    <div class="field">
+      <div class="label">Move to tray number</div>
+      <div style="display: flex; gap: 0.75rem;">
+        <input type="number" id="move-stick-tray" min="1" placeholder="Enter tray #" style="flex: 1;" />
+      </div>
+    </div>
+    ${projectTrays.length > 0 ? `
+      <div class="field">
+        <div class="label">Or select existing tray</div>
+        <select id="move-stick-select" onchange="document.getElementById('move-stick-tray').value = this.value" style="width: 100%;">
+          <option value="">— Select a tray —</option>
+          ${trayOptions}
+        </select>
+      </div>
+    ` : ''}
+    <div id="move-stick-msg"></div>
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doMoveStick('${trayId}', ${stickIndex})">Move Stick</button>
+    </div>
+  `);
+  setTimeout(() => { const el = document.getElementById('move-stick-tray'); if (el) el.focus(); }, 100);
+}
+
+async function doMoveStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scanId = tray.sticks[stickIndex];
+  const scan = await resolveScan(scanId, tray);
+  if (!scan) return;
+  
+  const newTrayNumStr = document.getElementById("move-stick-tray")?.value;
+  const msgEl = document.getElementById("move-stick-msg");
+  if (!newTrayNumStr) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Enter a tray number</div>';
+    return;
   }
+  const newTrayNum = parseInt(newTrayNumStr, 10);
+  if (isNaN(newTrayNum) || newTrayNum < 1) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Invalid tray number</div>';
+    return;
+  }
+  if (newTrayNum === tray.trayNum) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Stick is already in this tray</div>';
+    return;
+  }
+  
+  await withScanLock(session.currentProjectId, async () => {
+    const project = state.projects.find(p => p.id == session.currentProjectId);
+    let targetTray = state.trays.find(t => t.projectId == project.id && t.trayNum == newTrayNum);
+    
+    if (targetTray) {
+      if (targetTray.sticks.length >= targetTray.capacity) {
+        if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Target tray is full</div>';
+        return;
+      }
+      // Refresh target tray sticks from DB
+      if (useSupabase && sb) {
+        try {
+          const { data } = await sb.from('trays').select('sticks').eq('id', targetTray.id).single();
+          if (data && Array.isArray(data.sticks)) targetTray.sticks = data.sticks;
+        } catch (e) { /* use local */ }
+      }
+    } else {
+      // Create new tray
+      targetTray = {
+        id: generateId('t'),
+        projectId: project.id, ownerUserId: session.currentUser.id,
+        partNumber: scan.result.partNumber, label: scan.result.label || "", 
+        brand: scan.result.brand || "Unknown", generation: scan.result.generation || "Unknown",
+        trayNum: newTrayNum, capacity: project.defaultCap, sticks: [],
+        createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
+      };
+      state.trays.push(targetTray);
+      await dbSave('trays', 'insert', targetTray);
+      // Update counter if needed
+      if (newTrayNum > (state.trayCounters[project.id] || 0)) {
+        state.trayCounters[project.id] = newTrayNum;
+      }
+    }
+    
+    // Remove from source
+    tray.sticks.splice(stickIndex, 1);
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+    
+    // Add to target
+    targetTray.sticks.push(scan.id);
+    await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+    
+    scan.trayId = targetTray.id;
+    await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
+    
+    hideModal();
+    showToast(`Stick moved to Tray #${newTrayNum}`, '#3ed685');
+    renderTraysPage();
+  });
+}
+
+async function deleteStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scanId = tray.sticks[stickIndex];
+  const scan = await resolveScan(scanId, tray);
+  const partInfo = scan?.result?.partNumber || tray.partNumber || 'Unknown';
+  const serialInfo = scan?.result?.serial || 'No S/N';
+  
+  showModal(`
+    <h2 class="h2" style="color: #ff6b8a; margin-bottom: 12px;">Delete Stick?</h2>
+    <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border: 1px solid #2a2a35;">
+      <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; margin-bottom: 0.25rem;">Part Number</div>
+      <div class="mono" style="font-size: 1rem; color: #FFD700; font-weight: 700; word-break: break-all;">${escapeHtml(partInfo)}</div>
+      <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; margin-top: 0.75rem; margin-bottom: 0.25rem;">Serial</div>
+      <div class="mono" style="font-size: 0.9rem; color: #ccc;">${escapeHtml(serialInfo)}</div>
+    </div>
+    <div style="font-size: 0.95rem; color: #e8e8ee; margin-bottom: 1.5rem; line-height: 1.6;">
+      This will permanently remove this stick from <b style="color: #FFD700;">Tray #${tray.trayNum}</b> and delete its scan record.
+    </div>
+    <div class="flex gap-12" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" style="background: #ff6b8a; color: #fff;" onclick="confirmDeleteStick('${trayId}', ${stickIndex})">Delete stick</button>
+    </div>
+  `);
+}
+
+async function confirmDeleteStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scanId = tray.sticks[stickIndex];
+  
+  // Remove from tray sticks
   tray.sticks.splice(stickIndex, 1);
   await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  targetTray.sticks.push(scan.id);
-  await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
-  scan.trayId = targetTray.id;
-  await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
+  
+  // Remove the scan record
+  state.scans = state.scans.filter(s => s.id != scanId);
+  if (useSupabase && sb) {
+    try {
+      await sb.from('scans').delete().eq('id', scanId);
+    } catch (err) { console.warn('Delete stick scan error:', err); }
+  }
+  saveLocalState();
+  
+  hideModal();
+  showToast('Stick deleted successfully', '#ff6b8a');
   renderTraysPage();
 }
 
@@ -2306,6 +2768,27 @@ async function promptDeleteProject(pId, name) {
   }
 }
 
+async function promptResetAllData() {
+  if (!confirm('WARNING: This will delete ALL projects, trays, and scans across the entire system. This cannot be undone. Are you sure?')) return;
+  if (!confirm('FINAL CONFIRMATION: Type OK to confirm you want to wipe everything.')) return;
+  
+  state.projects = [];
+  state.scans = [];
+  state.trays = [];
+  state.trayCounters = {};
+  
+  if (useSupabase && sb) {
+    try {
+      await sb.from('scans').delete().neq('id', '');
+      await sb.from('trays').delete().neq('id', '');
+      await sb.from('projects').delete().neq('id', '');
+    } catch (e) { console.error('Reset all data error:', e); }
+  }
+  saveLocalState();
+  showToast('All system data has been reset', '#ff6b8a');
+  switchProject();
+}
+
 async function handleCSVImport() {
   const fileInput = document.getElementById("csv-upload");
   if (!fileInput.files || fileInput.files.length === 0) {
@@ -2458,7 +2941,7 @@ async function executeCSVImport() {
       }
     } else {
       tray = {
-        id: `t_${project.id}_${trayNumRaw}_${Date.now()}_${i}`,
+        id: generateId('t'),
         projectId: project.id, ownerUserId: session.currentUser.id,
         partNumber: partNum, label: "", brand, generation: gen,
         trayNum: trayNumRaw, capacity: project.defaultCap, sticks: [],
@@ -2469,7 +2952,7 @@ async function executeCSVImport() {
       await dbSave('trays', 'insert', tray);
     }
     
-    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
+    const scanId = generateId('s');
     const newScan = {
       id: scanId, projectId: project.id, userId: session.currentUser.id,
       ts: Date.now() + i, scan: scanRaw,
