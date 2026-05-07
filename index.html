@@ -433,9 +433,46 @@ function updateTrayCounters() {
 
 function setupRealtime() {
   if (!sb) return;
-  sb.channel('public:any')
-    .on('postgres_changes', { event: '*', schema: 'public' }, () => fetchDataSilent())
+  
+  const channel = sb.channel('db-changes');
+  
+  channel
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans' }, payload => {
+      if (!state.scans.find(s => s.id === payload.new.id)) {
+        state.scans.unshift(payload.new);
+        if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') render();
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays' }, payload => {
+      if (!state.trays.find(t => t.id === payload.new.id)) {
+        state.trays.push(payload.new);
+        updateTrayCounters();
+        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') render();
+      }
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trays' }, payload => {
+      const idx = state.trays.findIndex(t => t.id === payload.new.id);
+      if (idx !== -1) {
+        state.trays[idx] = payload.new;
+        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') render();
+      }
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects' }, payload => {
+      const idx = state.projects.findIndex(p => p.id === payload.new.id);
+      if (idx !== -1) {
+        state.projects[idx] = payload.new;
+        if (session.page === 'projects' || session.page === 'scanner') render();
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, payload => {
+      if (!state.users.find(u => u.id === payload.new.id)) {
+        state.users.push(payload.new);
+      }
+    })
     .subscribe();
+    
+  // Periodic full sync every 60 seconds just to ensure consistency
+  setInterval(() => fetchDataSilent(), 60000);
 }
 
 window.isBulkScanning = false;
@@ -493,6 +530,8 @@ let session = {
   currentProjectId: null,
   page: "scanner",     // "projects" | "scanner" | "trays" | "history" | "admin"
   authView: "login",
+  lastScan: null,
+  lastAssignment: null,
 };
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1291,7 +1330,10 @@ function renderScanner() {
                 <div class="avatar avatar-sm" style="background: ${u?.color || '#555'};">${u?.name.charAt(0).toUpperCase() || '?'}</div>
                 <div style="flex: 1; min-width: 0;">
                   <div class="mono truncate" style="font-size: 12px; color: #fff;">${escapeHtml(s.result.partNumber || s.scan.slice(0, 30))}</div>
-                  <div style="font-size: 10px; color: #888; margin-top: 2px;">Tray #${tray?.trayNum} · ${timeAgo(s.ts)}</div>
+                  <div style="font-size: 10px; color: #888; margin-top: 2px;">
+                    Tray #${tray?.trayNum} · ${timeAgo(s.ts)}
+                    ${tray && state.users.find(u2 => u2.id === tray.ownerUserId) ? ` · <span style="color: ${state.users.find(u2 => u2.id === tray.ownerUserId).color}; opacity: 0.8;">${state.users.find(u2 => u2.id === tray.ownerUserId).name}</span>` : ""}
+                  </div>
                   ${s.result.serial ? `<div class="mono" style="font-size: 10px; color: #3ed685; margin-top: 1px;">S/N: ${escapeHtml(s.result.serial)}</div>` : ''}
                 </div>
                 <span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span>
@@ -1327,6 +1369,11 @@ function renderScanner() {
   if (si) si.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doScan(); }
   });
+
+  // Persist the last result card if it exists (prevents wipeout during background refreshes)
+  if (session.lastScan && session.lastAssignment) {
+    renderResultCard(session.lastScan, session.lastAssignment);
+  }
 }
 
 function setScanMode(mode) { scanMode = mode; renderScanner(); }
@@ -1373,6 +1420,11 @@ async function doBulkScan() {
     }
     state.scans.unshift(newScan);
     await dbSave('scans', 'insert', newScan);
+    
+    // Save for persistence
+    session.lastScan = newScan;
+    session.lastAssignment = assignment;
+    
     success++;
     
     // Add a 50ms delay between processing each stick to absolutely guarantee no overlap
@@ -1456,6 +1508,10 @@ async function doScan() {
   
   const trayN = assignment.tray.trayNum || assignment.newNum;
   const project = state.projects.find(p => p.id === session.currentProjectId);
+  
+  // Save to session for persistence during re-renders
+  session.lastScan = newScan;
+  session.lastAssignment = assignment;
   
   // Render result card
   renderResultCard(newScan, assignment);
