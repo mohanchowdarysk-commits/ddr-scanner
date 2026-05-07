@@ -7,81 +7,115 @@
 <style>
   /* ─── Reset & base ──────────────────────────────────────────────────── */
   *,*::before,*::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; }
+  
+  html {
+    font-size: 16px;
+  }
+  @media (min-width: 1600px) {
+    html { font-size: 18px; }
+  }
+
   body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     background: #0a0a0f;
     color: #e8e8ee;
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
+    line-height: 1.5;
   }
+
   button { font-family: inherit; cursor: pointer; }
   input, select, textarea { font-family: inherit; }
   
   /* ─── Layout primitives ─────────────────────────────────────────────── */
-  .page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-  .container { width: 100%; max-width: 1800px; margin: 0 auto; padding: 24px 20px; }
+  .page { 
+    min-height: 100vh; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    padding: 2rem; 
+  }
+  
+  .container, .page-wrapper {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 2rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
   
   /* ─── Auth ──────────────────────────────────────────────────────────── */
   .auth-card {
     background: #1a1a22;
-    border-radius: 16px;
-    padding: 32px;
+    border-radius: 1rem;
+    padding: 2.5rem;
     width: 100%;
-    max-width: 400px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    max-width: 25rem;
+    box-shadow: 0 1rem 3rem rgba(0,0,0,0.4);
   }
-  .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .logo { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
   .logo-icon {
-    width: 44px; height: 44px; border-radius: 12px;
+    width: 3rem; height: 3rem; border-radius: 0.75rem;
     background: linear-gradient(135deg, #FFD700, #FF8C00);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 900; font-size: 22px; color: #1a1a2e;
+    font-weight: 900; font-size: 1.5rem; color: #1a1a2e;
   }
-  .logo-title { font-size: 22px; font-weight: 800; color: #FFD700; letter-spacing: -0.4px; }
-  .logo-sub { font-size: 11px; color: #888; letter-spacing: 0.5px; }
-  .tabs { display: flex; margin-bottom: 24px; background: #15151c; border-radius: 10px; padding: 4px; }
-  .tab { flex: 1; padding: 10px 0; border: 0; background: transparent; color: #888; font-weight: 700; font-size: 12px; border-radius: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .logo-title { font-size: 1.5rem; font-weight: 800; color: #FFD700; letter-spacing: -0.025em; }
+  .logo-sub { font-size: 0.75rem; color: #888; letter-spacing: 0.05em; }
+  
+  .tabs { display: flex; margin-bottom: 1.5rem; background: #15151c; border-radius: 0.625rem; padding: 0.25rem; }
+  .tab { 
+    flex: 1; padding: 0.75rem 0; border: 0; background: transparent; 
+    color: #888; font-weight: 700; font-size: 0.75rem; border-radius: 0.5rem; 
+    text-transform: uppercase; letter-spacing: 0.06em; 
+  }
   .tab.active { background: #FFD700; color: #1a1a2e; }
   
   /* ─── Form elements ─────────────────────────────────────────────────── */
-  .field { margin-bottom: 14px; }
-  .label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; display: block; }
+  .field { margin-bottom: 1rem; }
+  .label { font-size: 0.75rem; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.5rem; display: block; }
+  
   input[type="text"], input[type="password"], input[type="number"], textarea, select {
     width: 100%; background: #0a0a0f; border: 1px solid #2a2a35; color: #fff;
-    padding: 11px 14px; border-radius: 8px; font-size: 14px; outline: none;
+    padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 1rem; outline: none;
+    min-height: 2.75rem; /* ~44px */
   }
   input:focus, textarea:focus, select:focus { border-color: #FFD700; }
-  textarea { resize: vertical; min-height: 110px; font-family: ui-monospace, monospace; line-height: 1.5; }
+  textarea { resize: vertical; min-height: 7rem; font-family: ui-monospace, monospace; line-height: 1.5; }
   
   /* ─── Buttons ───────────────────────────────────────────────────────── */
   .btn {
     background: linear-gradient(135deg, #FFD700, #FF8C00);
-    color: #1a1a2e; border: 0; padding: 10px 20px; border-radius: 10px;
-    font-size: 13px; font-weight: 800; letter-spacing: 0.5px;
+    color: #1a1a2e; border: 0; padding: 0.75rem 1.5rem; border-radius: 0.625rem;
+    font-size: 1rem; font-weight: 800; letter-spacing: 0.03em;
+    min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center;
   }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-ghost {
     background: transparent; color: #888; border: 1px solid #2a2a35;
-    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    padding: 0.6rem 1.2rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 600;
+    min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center;
   }
   .btn-ghost:hover { color: #fff; border-color: #444; }
   .btn-block { width: 100%; }
   
   /* ─── Notifications ─────────────────────────────────────────────────── */
-  .alert { padding: 10px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-top: 8px; }
+  .alert { padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 600; margin-top: 0.5rem; }
   .alert-error { background: #3a1520; color: #ff6b8a; }
   .alert-success { background: #0a2818; color: #3ed685; }
   .alert-info { background: #0f2240; color: #4fa3ff; }
   
   .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: #1a1a22; padding: 14px 22px; border-radius: 10px;
-    font-weight: 700; font-size: 14px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    background: #1a1a22; padding: 1rem 1.5rem; border-radius: 0.625rem;
+    font-weight: 700; font-size: 0.9rem;
+    box-shadow: 0 0.5rem 2rem rgba(0,0,0,0.5);
     z-index: 200; animation: slide-in 0.2s ease-out;
   }
-  @keyframes slide-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slide-in { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: translateY(0); } }
   
   /* ─── Top bar ───────────────────────────────────────────────────────── */
   .topbar {
@@ -89,47 +123,51 @@
     position: sticky; top: 0; z-index: 50;
   }
   .topbar-inner {
-    width: 100%; max-width: 1800px; margin: 0 auto; padding: 12px 20px;
-    display: flex; align-items: center; gap: 16px;
+    width: 100%; max-width: 1400px; margin: 0 auto; padding: 0.75rem 2rem;
+    display: flex; align-items: center; gap: 1rem;
   }
-  .nav { flex: 1; display: flex; gap: 4px; justify-content: center; }
+  .nav { flex: 1; display: flex; gap: 0.25rem; justify-content: center; }
   .nav button {
-    background: transparent; color: #888; font-weight: 700; font-size: 13px;
-    padding: 8px 16px; border-radius: 8px; border: 0; letter-spacing: 0.4px;
+    background: transparent; color: #888; font-weight: 700; font-size: 0.9rem;
+    padding: 0.6rem 1.2rem; border-radius: 0.5rem; border: 0; letter-spacing: 0.02em;
+    min-height: 2.75rem;
   }
   .nav button.active { background: #FFD700; color: #1a1a2e; }
   .nav button:hover:not(.active) { color: #fff; }
   
   .avatar {
-    width: 32px; height: 32px; border-radius: 50%; color: #fff;
+    width: 2rem; height: 2rem; border-radius: 50%; color: #fff;
     display: inline-flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 13px;
+    font-weight: 700; font-size: 0.8rem;
   }
-  .avatar-sm { width: 24px; height: 24px; font-size: 11px; }
-  .avatar-xs { width: 22px; height: 22px; font-size: 10px; border: 2px solid #1a1a22; }
+  .avatar-sm { width: 1.5rem; height: 1.5rem; font-size: 0.7rem; }
+  .avatar-xs { width: 1.375rem; height: 1.375rem; font-size: 0.65rem; border: 2px solid #1a1a22; }
   
   /* ─── Cards & panels ────────────────────────────────────────────────── */
-  .card { background: #1a1a22; border-radius: 14px; padding: 20px; }
-  .card-tight { padding: 16px; }
+  .card { background: #1a1a22; border-radius: 0.875rem; padding: 1.5rem; }
+  .card-tight { padding: 1rem; }
   
   /* ─── Project cards ─────────────────────────────────────────────────── */
   .proj-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
+    width: 100%;
   }
   .proj-card {
     text-align: left; border: 0; background: #1a1a22;
-    border-radius: 14px; padding: 20px;
+    border-radius: 1rem; padding: 1.5rem;
     transition: background 0.15s;
+    min-height: 8rem;
   }
   .proj-card:hover { background: #22222d; }
-  .proj-card.mixed { border-top: 3px solid #3ed685; }
-  .proj-card.separate { border-top: 3px solid #4fa3ff; }
+  .proj-card.mixed { border-top: 4px solid #3ed685; }
+  .proj-card.separate { border-top: 4px solid #4fa3ff; }
   
   .badge {
-    font-size: 9px; font-weight: 800; letter-spacing: 1px;
-    padding: 3px 8px; border-radius: 4px;
+    font-size: 0.8rem; font-weight: 800; letter-spacing: 0.06em;
+    padding: 0.25rem 0.5rem; border-radius: 0.25rem;
+    text-transform: uppercase;
   }
   .badge-mixed    { background: #0a2818; color: #3ed685; }
   .badge-separate { background: #0f2240; color: #4fa3ff; }
@@ -137,10 +175,10 @@
   .badge-active   { background: #0a2818; color: #3ed685; }
   
   /* ─── Mode picker ───────────────────────────────────────────────────── */
-  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   .mode-opt {
     text-align: left; border: 2px solid #2a2a35; background: transparent;
-    border-radius: 12px; padding: 14px; transition: all 0.15s;
+    border-radius: 0.75rem; padding: 1rem; transition: all 0.15s;
   }
   .mode-opt.active.mixed { border-color: #3ed685; background: #15151c; }
   .mode-opt.active.separate { border-color: #4fa3ff; background: #15151c; }
@@ -149,36 +187,61 @@
   .tray-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
+    gap: 1.5rem;
   }
-  .tray-card { background: #1a1a22; border-radius: 12px; padding: 16px; }
-  .tray-progress { height: 6px; background: #0a0a0f; border-radius: 3px; overflow: hidden; }
-  .tray-progress-fill { height: 100%; transition: width 0.3s; }
+  .tray-card { 
+    background: #1a1a22; 
+    border-radius: 1.25rem; 
+    padding: 1.5rem; 
+    border: 1px solid #2a2a35;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .tray-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 1rem 2rem rgba(0,0,0,0.4);
+    border-color: #3a3a45;
+  }
+  .tray-progress { 
+    height: 0.5rem; 
+    background: #0a0a0f; 
+    border-radius: 1rem; 
+    overflow: hidden; 
+    margin: 1rem 0;
+  }
+  .tray-progress-fill { 
+    height: 100%; 
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
+    box-shadow: 0 0 10px rgba(255,255,255,0.1);
+  }
   
   /* ─── Brand pills ───────────────────────────────────────────────────── */
   .pill {
-    color: #fff; padding: 3px 8px; border-radius: 4px;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    color: #fff; padding: 0.25rem 0.5rem; border-radius: 0.25rem;
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em;
   }
-  .pill-large { padding: 5px 12px; font-size: 12px; }
+  .pill-large { padding: 0.375rem 0.75rem; font-size: 0.8rem; }
   
   /* ─── Engine toggle ─────────────────────────────────────────────────── */
   .engine-btn {
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: 0.5rem;
     background: #15151c; border: 1px solid #2a2a35;
-    padding: 6px 10px; border-radius: 8px;
+    padding: 0.5rem 0.75rem; border-radius: 0.5rem;
+    min-height: 2.75rem;
   }
-  .engine-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .engine-dot { width: 0.375rem; height: 0.375rem; border-radius: 50%; }
   .engine-popup {
-    position: absolute; top: calc(100% + 6px); right: 0;
-    background: #1a1a22; border: 1px solid #2a2a35; border-radius: 12px;
-    padding: 8px; width: 280px; z-index: 100;
-    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+    position: absolute; top: calc(100% + 0.375rem); right: 0;
+    background: #1a1a22; border: 1px solid #2a2a35; border-radius: 0.75rem;
+    padding: 0.5rem; width: 17.5rem; z-index: 100;
+    box-shadow: 0 0.75rem 2rem rgba(0,0,0,0.4);
   }
   .engine-opt {
     width: 100%; text-align: left; border: 0; background: transparent;
-    padding: 10px 12px; border-radius: 8px; margin-bottom: 2px;
-    display: flex; align-items: center; gap: 10px;
+    padding: 0.625rem 0.75rem; border-radius: 0.5rem; margin-bottom: 0.125rem;
+    display: flex; align-items: center; gap: 0.625rem;
+    min-height: 2.75rem;
   }
   .engine-opt.active { background: #15151c; }
   .engine-opt:hover { background: #15151c; }
@@ -188,36 +251,36 @@
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,0.6); z-index: 300;
     align-items: center; justify-content: center;
-    padding: 20px;
+    padding: 1.5rem;
   }
   .modal-overlay.show { display: flex; }
   .modal-content {
-    background: #1a1a22; border-radius: 14px; padding: 24px;
-    max-width: 560px; width: 100%; max-height: 85vh; overflow: auto;
+    background: #1a1a22; border-radius: 0.875rem; padding: 1.5rem;
+    max-width: 35rem; width: 100%; max-height: 85vh; overflow: auto;
   }
   
   /* ─── Empty states ──────────────────────────────────────────────────── */
-  .empty { background: #1a1a22; border-radius: 12px; padding: 48px 24px; text-align: center; color: #aaa; }
+  .empty { background: #1a1a22; border-radius: 0.75rem; padding: 3rem 1.5rem; text-align: center; color: #aaa; font-size: 1rem; }
   
   /* ─── Stats ─────────────────────────────────────────────────────────── */
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  .stat { background: #1a1a22; border-radius: 12px; padding: 16px; }
-  .stat-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-  .stat-value { font-size: 28px; font-weight: 800; letter-spacing: -1px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .stat { background: #1a1a22; border-radius: 0.75rem; padding: 1rem; }
+  .stat-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.5rem; }
+  .stat-value { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.05em; }
   
   /* ─── Headings ──────────────────────────────────────────────────────── */
-  h1.h { font-size: 22px; font-weight: 800; color: #FFD700; letter-spacing: -0.5px; margin: 0 0 16px; }
-  h2.h2 { font-size: 16px; font-weight: 700; color: #e8e8ee; letter-spacing: -0.3px; margin: 0; }
+  h1.h { font-size: 1.5rem; font-weight: 800; color: #FFD700; letter-spacing: -0.025em; margin: 0 0 1rem; }
+  h2.h2 { font-size: 1.1rem; font-weight: 700; color: #e8e8ee; letter-spacing: -0.015em; margin: 0; }
   
   /* ─── Tables ────────────────────────────────────────────────────────── */
   .history-row {
     display: grid;
     grid-template-columns: 1fr 1.5fr 0.8fr 0.7fr 0.6fr 0.7fr 0.7fr;
-    gap: 12px; padding: 10px 16px;
+    gap: 0.75rem; padding: 0.75rem 1rem;
     border-bottom: 1px solid #15151c; align-items: center;
-    font-size: 12px;
+    font-size: 0.85rem;
   }
-  .history-head { background: #15151c; font-size: 10px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  .history-head { background: #15151c; font-size: 0.75rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.06em; }
   
   /* ─── Print styles for Zebra GK420d ─────────────────────────────────── */
   @media print {
@@ -244,22 +307,29 @@
   #print-area.show { display: block; position: absolute; left: -9999px; }
   
   /* ─── Utility ───────────────────────────────────────────────────────── */
-  .mono { font-family: ui-monospace, "SF Mono", monospace; }
+  .mono { font-family: ui-monospace, "SF Mono", monospace; font-size: 1rem; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flex { display: flex; }
   .flex-1 { flex: 1; }
-  .gap-8 { gap: 8px; }
-  .gap-12 { gap: 12px; }
-  .gap-16 { gap: 16px; }
+  .gap-8 { gap: 0.5rem; }
+  .gap-12 { gap: 0.75rem; }
+  .gap-16 { gap: 1rem; }
   .items-center { align-items: center; }
   .justify-between { justify-content: space-between; }
   
-  @media (max-width: 700px) {
-    .topbar-inner { flex-wrap: wrap; }
-    .nav { order: 3; width: 100%; flex-wrap: wrap; }
+  @media (max-width: 1200px) {
+    .proj-grid { grid-template-columns: repeat(2, 1fr); }
     .stats { grid-template-columns: repeat(2, 1fr); }
-    .history-row { grid-template-columns: 1fr 1fr; gap: 6px; }
+  }
+
+  @media (max-width: 768px) {
+    .container { padding: 1rem; }
+    .topbar-inner { flex-wrap: wrap; padding: 1rem; }
+    .nav { order: 3; width: 100%; flex-wrap: wrap; margin-top: 1rem; }
+    .proj-grid { grid-template-columns: 1fr; }
+    .history-row { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
     .history-head { display: none; }
+    .scanner-layout { grid-template-columns: 1fr !important; }
   }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -316,6 +386,8 @@ let state = {
 };
 let stateLoaded = false;
 let useSupabase = !!sb;
+let globalSearchQuery = "";
+let scanMode = "single";
 
 function loadLocalState() {
   try {
@@ -395,6 +467,11 @@ async function initSupabaseState() {
   }
 }
 
+function getProjectStickCount(projectId) {
+  const trays = state.trays.filter(t => t.projectId == projectId);
+  return trays.reduce((sum, t) => sum + (t.sticks?.length || 0), 0);
+}
+
 function updateTrayCounters() {
   state.trayCounters = {};
   const trayMap = {};
@@ -403,14 +480,16 @@ function updateTrayCounters() {
   
   for (const t of state.trays) {
     t.trayNum = parseInt(t.trayNum, 10) || 0;
-    const key = `${t.projectId}_${t.trayNum}`;
+    const project = state.projects.find(p => p.id == t.projectId);
+    const key = (project && project.mode === 'separate') 
+      ? `${t.projectId}_${t.ownerUserId || t.createdBy}_${t.trayNum}`
+      : `${t.projectId}_${t.trayNum}`;
     
     if (!trayMap[key]) {
       trayMap[key] = t;
       mergedTrays.push(t);
     } else {
-      // Duplicate tray found for the same tray number -> Merge sticks
-      trayMap[key].sticks.push(...t.sticks);
+      trayMap[key].sticks = [...(trayMap[key].sticks || []), ...(t.sticks || [])];
       if (useSupabase && sb) sb.from('trays').delete().eq('id', t.id).then();
       changed = true;
     }
@@ -423,11 +502,6 @@ function updateTrayCounters() {
   if (changed) {
     state.trays = mergedTrays;
     saveLocalState();
-    if (useSupabase && sb) {
-      Object.values(trayMap).forEach(t => {
-        sb.from('trays').update({ sticks: t.sticks }).eq('id', t.id).then();
-      });
-    }
   }
 }
 
@@ -445,34 +519,34 @@ function setupRealtime() {
   
   channel
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans' }, payload => {
-      if (!state.scans.find(s => s.id === payload.new.id)) {
+      if (!state.scans.find(s => s.id == payload.new.id)) {
         state.scans.unshift(payload.new);
         if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays' }, payload => {
-      if (!state.trays.find(t => t.id === payload.new.id)) {
+      if (!state.trays.find(t => t.id == payload.new.id)) {
         state.trays.push(payload.new);
         updateTrayCounters();
         if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trays' }, payload => {
-      const idx = state.trays.findIndex(t => t.id === payload.new.id);
+      const idx = state.trays.findIndex(t => t.id == payload.new.id);
       if (idx !== -1) {
         state.trays[idx] = payload.new;
         if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects' }, payload => {
-      const idx = state.projects.findIndex(p => p.id === payload.new.id);
+      const idx = state.projects.findIndex(p => p.id == payload.new.id);
       if (idx !== -1) {
         state.projects[idx] = payload.new;
         if (session.page === 'projects' || session.page === 'scanner') safeRender();
       }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, payload => {
-      if (!state.users.find(u => u.id === payload.new.id)) {
+      if (!state.users.find(u => u.id == payload.new.id)) {
         state.users.push(payload.new);
         if (session.page === 'admin') safeRender();
       }
@@ -524,6 +598,7 @@ async function dbSave(table, action, data, matchField) {
       if (action === 'insert') res = await sb.from(table).insert(data);
       else if (action === 'update') res = await sb.from(table).update(data.updates).eq(matchField, data.id);
       else if (action === 'upsert') res = await sb.from(table).upsert(data);
+      else if (action === 'delete') res = await sb.from(table).delete().eq(matchField, data.id);
       
       if (res && res.error) {
         console.error(`DB ${action} on ${table} failed:`, res.error);
@@ -795,14 +870,14 @@ async function classify(scan) {
    ════════════════════════════════════════════════════════════════════════ */
 function assignTray(projectId, userId, classification) {
   if (!classification?.partNumber) return null;
-  const project = state.projects.find(p => p.id === projectId);
+  const project = state.projects.find(p => p.id == projectId);
   if (!project) return null;
 
   const part = classification.partNumber.toUpperCase();
   const candidates = state.trays.filter(t => {
-    if (t.projectId !== projectId) return false;
-    if (t.partNumber.toUpperCase() !== part) return false;
-    if (project.mode === "separate" && t.ownerUserId !== userId) return false;
+    if (t.projectId != projectId) return false;
+    if (t.partNumber.toUpperCase() != part) return false;
+    if (project.mode === "separate" && t.ownerUserId != userId) return false;
     return true;
   });
 
@@ -948,15 +1023,15 @@ function renderProjectGate() {
 
   document.getElementById("root").innerHTML = `
     <div class="page" style="align-items: flex-start;">
-      <div class="container" style="max-width: 880px;">
-        <div class="flex items-center justify-between" style="margin-bottom: 32px;">
+      <div class="container" style="max-width: 1400px;">
+        <div class="flex items-center justify-between" style="margin-bottom: 2rem;">
           <div>
-            <h1 style="font-size: 28px; font-weight: 800; color: #FFD700; letter-spacing: -0.5px; margin: 0;">Choose a project</h1>
-            <div style="font-size: 14px; color: #888; margin-top: 6px;">
+            <h1 style="font-size: 1.75rem; font-weight: 800; color: #FFD700; letter-spacing: -0.02em; margin: 0;">Choose a project</h1>
+            <div style="font-size: 0.95rem; color: #888; margin-top: 0.5rem;">
               Welcome <span style="color: ${u.color}">${escapeHtml(u.name)}</span> · pick a project to begin scanning
             </div>
           </div>
-          <button class="btn-ghost" onclick="logout()" style="font-size: 12px;">Sign out</button>
+          <button class="btn-ghost" onclick="logout()" style="font-size: 0.9rem;">Sign out</button>
         </div>
 
         ${(u.role === "admin" || u.role === "supervisor") ? `
@@ -971,27 +1046,27 @@ function renderProjectGate() {
         ` : `
           <div class="proj-grid">
             ${myProjects.map(p => {
-              const members = state.users.filter(u2 => p.memberIds.includes(u2.id));
+              const members = state.users.filter(u2 => p.memberIds.some(id => id == u2.id));
               return `
                 <div class="proj-card ${p.mode}" onclick="selectProject('${p.id}')" style="cursor: pointer;">
-                  <div class="flex justify-between items-center" style="margin-bottom: 12px;">
-                    <div style="font-size: 16px; font-weight: 700; color: #FFD700; letter-spacing: -0.3px;">${escapeHtml(p.name)}</div>
-                    <div style="display: flex; gap: 8px; align-items: center;">
+                  <div class="flex justify-between items-center" style="margin-bottom: 0.75rem;">
+                    <div style="font-size: 1.25rem; font-weight: 700; color: #FFD700; letter-spacing: -0.015em;">${escapeHtml(p.name)}</div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
                       <span class="badge badge-${p.mode}">${p.mode.toUpperCase()}</span>
                       ${u.role === "admin" ? `
                         <button onclick="event.stopPropagation(); promptDeleteProject('${p.id}', '${escapeHtml(p.name)}')" 
-                          style="background: transparent; border: 1px solid #ff4444; color: #ff4444; padding: 2px 6px; border-radius: 4px; font-size: 10px; cursor: pointer; text-transform: uppercase;">Del</button>
+                          style="background: transparent; border: 1px solid #ff4444; color: #ff4444; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.8rem; cursor: pointer; text-transform: uppercase;">Del</button>
                       ` : ''}
                     </div>
                   </div>
-                  <div style="font-size: 11px; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">
+                  <div style="font-size: 0.95rem; color: #888; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">
                     ${members.length} member${members.length === 1 ? "" : "s"} · default ${p.defaultCap}/tray
                   </div>
                   <div class="flex gap-8" style="flex-wrap: wrap;">
                     ${members.slice(0, 6).map(m => `
-                      <div class="avatar avatar-xs" title="${escapeHtml(m.name)}" style="background: ${m.color};">${m.name.charAt(0).toUpperCase()}</div>
+                      <div class="avatar" title="${escapeHtml(m.name)}" style="background: ${m.color}; font-size: 0.9rem;">${m.name.charAt(0).toUpperCase()}</div>
                     `).join("")}
-                    ${members.length > 6 ? `<div style="font-size: 11px; color: #888; align-self: center;">+${members.length - 6}</div>` : ""}
+                    ${members.length > 6 ? `<div style="font-size: 0.9rem; color: #888; align-self: center;">+${members.length - 6}</div>` : ""}
                   </div>
                 </div>
               `;
@@ -1105,7 +1180,7 @@ function toggleMember(uid) {
   else createProjectMembers.add(uid);
   document.querySelectorAll(".member-opt").forEach(el => {
     const sel = createProjectMembers.has(el.dataset.uid);
-    el.style.borderColor = sel ? state.users.find(u => u.id === el.dataset.uid).color : "#2a2a35";
+    el.style.borderColor = sel ? state.users.find(u => u.id == el.dataset.uid).color : "#2a2a35";
     el.style.background = sel ? "#15151c" : "transparent";
     el.querySelector(".member-check").style.display = sel ? "inline" : "none";
   });
@@ -1141,7 +1216,7 @@ async function doCreateProject() {
    MAIN APP SHELL
    ════════════════════════════════════════════════════════════════════════ */
 function renderApp() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
+  const project = state.projects.find(p => p.id == session.currentProjectId);
   if (!project) {
     session.currentProjectId = null;
     render();
@@ -1152,11 +1227,11 @@ function renderApp() {
   document.getElementById("root").innerHTML = `
     <div class="topbar">
       <div class="topbar-inner">
-        <button onclick="switchProject()" style="display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 0;">
-          <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #FFD700, #FF8C00); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; color: #1a1a2e;">D</div>
+        <button onclick="switchProject()" style="display: flex; align-items: center; gap: 0.75rem; border: 0; background: transparent; padding: 0;">
+          <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, #FFD700, #FF8C00); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.25rem; color: #1a1a2e;">D</div>
           <div style="text-align: left;">
-            <div style="font-size: 11px; color: #888; letter-spacing: 0.5px; text-transform: uppercase;">Project</div>
-            <div style="font-size: 13px; font-weight: 700; color: #FFD700; display: flex; align-items: center; gap: 6px;">
+            <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.05em; text-transform: uppercase;">Project</div>
+            <div style="font-size: 0.95rem; font-weight: 700; color: #FFD700; display: flex; align-items: center; gap: 0.5rem;">
               ${escapeHtml(project.name)}
               <span class="badge badge-${project.mode}">${project.mode.toUpperCase()}</span>
             </div>
@@ -1169,23 +1244,23 @@ function renderApp() {
           <button class="${session.page === 'master' ? 'active' : ''}" onclick="setPage('master')">Master</button>
           ${user.role === "admin" ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
         </nav>
-        <div style="flex: 1; margin: 0 20px; max-width: 300px;">
+        <div style="flex: 1; margin: 0 1.5rem; max-width: 20rem;">
           <input type="text" id="global-search" placeholder="Search Part Number or Tray #..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
-                 style="width: 100%; padding: 8px 12px; font-size: 12px; border-radius: 8px; background: #1a1a22; border: 1px solid #2a2a35; color: #fff;" />
+                 style="width: 100%; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 0.625rem; background: #1a1a22; border: 1px solid #2a2a35; color: #fff; min-height: 2.5rem;" />
         </div>
-        <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative;">
+        <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative; min-height: 2.5rem;">
           <span class="engine-dot" style="background: ${state.engine === 'rule' ? '#888' : '#4fa3ff'};"></span>
-          <span style="font-size: 11px; color: ${state.engine === 'rule' ? '#888' : '#4fa3ff'}; font-weight: 700; letter-spacing: 1px;">${state.engine.toUpperCase()}</span>
-          <span style="font-size: 10px; color: #666;">▾</span>
+          <span style="font-size: 0.85rem; color: ${state.engine === 'rule' ? '#888' : '#4fa3ff'}; font-weight: 700; letter-spacing: 0.05em;">${state.engine.toUpperCase()}</span>
+          <span style="font-size: 0.75rem; color: #666;">▾</span>
           <div id="engine-popup" class="engine-popup" style="display: none;" onclick="event.stopPropagation()"></div>
         </button>
-        <div class="flex items-center gap-8">
-          <div class="avatar" style="background: ${user.color};">${user.name.charAt(0).toUpperCase()}</div>
+        <div class="flex items-center gap-12">
+          <div class="avatar" style="background: ${user.color}; width: 2.5rem; height: 2.5rem; font-size: 1rem;">${user.name.charAt(0).toUpperCase()}</div>
           <div style="display: flex; flex-direction: column; line-height: 1.1;">
-            <span style="font-size: 13px; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
-            <span style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px;">${user.role}</span>
+            <span style="font-size: 0.95rem; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
+            <span style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">${user.role}</span>
           </div>
-          <button class="btn-ghost" style="font-size: 11px; padding: 6px 10px; margin-left: 4px;" onclick="logout()">Sign out</button>
+          <button class="btn-ghost" style="font-size: 0.85rem; padding: 0.5rem 0.75rem; min-height: 2.25rem; margin-left: 0.25rem;" onclick="logout()">Sign out</button>
         </div>
       </div>
     </div>
@@ -1199,7 +1274,1347 @@ function renderApp() {
   else if (session.page === "admin") renderAdminPage();
 }
 
-let globalSearchQuery = "";
+function renderScanner() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  if (!project) {
+    session.currentProjectId = null;
+    session.page = "projects";
+    render();
+    return;
+  }
+  const projectScans = state.scans.filter(s => s.projectId == project.id);
+  
+  document.getElementById("page-content").innerHTML = `
+    <div class="scanner-layout" style="display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 1.5rem;">
+      <div>
+        <h1 class="h">Scan</h1>
+        <div class="card">
+          <div style="display: flex; gap: 0; margin-bottom: 1rem; border-radius: 0.625rem; overflow: hidden; border: 1px solid #2a2a35;">
+            <button onclick="setScanMode('single')" style="flex:1; padding: 0.75rem 1rem; border: none; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; cursor: pointer;
+              background: ${scanMode === 'single' ? '#FFD700' : '#15151c'}; color: ${scanMode === 'single' ? '#0a0a0f' : '#888'};">SINGLE</button>
+            <button onclick="setScanMode('dual')" style="flex:1; padding: 0.75rem 1rem; border: none; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; cursor: pointer;
+              background: ${scanMode === 'dual' ? '#4fa3ff' : '#15151c'}; color: ${scanMode === 'dual' ? '#0a0a0f' : '#888'};">DUAL (P/N+S/N)</button>
+            <button onclick="setScanMode('bulk')" style="flex:1; padding: 0.75rem 1rem; border: none; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.05em; cursor: pointer;
+              background: ${scanMode === 'bulk' ? '#3ed685' : '#15151c'}; color: ${scanMode === 'bulk' ? '#0a0a0f' : '#888'};">BULK</button>
+          </div>
+          
+          ${scanMode === 'single' ? `
+            <div class="label">QR / Barcode input</div>
+            <textarea id="scan-input" placeholder="Paste or type scan data here…&#10;e.g.  (P)HMA41GR7MFR4N-TF (S)SN938475 (L)16GB DDR4" style="font-size: 1rem;"></textarea>
+          ` : scanMode === 'dual' ? `
+            <div class="label" style="color: #4fa3ff;">① Part Number Scan</div>
+            <textarea id="scan-input" rows="2" placeholder="Scan the Part Number barcode here…" style="margin-bottom: 0.75rem; font-size: 1rem;"></textarea>
+            <div class="label" style="color: #3ed685;">② Serial Number Scan</div>
+            <textarea id="serial-input" rows="2" placeholder="Scan the Serial Number barcode here…" style="font-size: 1rem;"></textarea>
+          ` : `
+            <div class="label" style="color: #3ed685;">Paste multiple scans (one per line)</div>
+            <textarea id="scan-input" rows="6" placeholder="Paste multiple part numbers here, one per line…&#10;e.g.&#10;HMA41GR7MFR4N-TF&#10;M393B2G70QH0-YK0&#10;KVR24N17S8/8" style="font-size: 1rem;"></textarea>
+          `}
+          
+          <div class="flex gap-12" style="margin-top: 1.5rem; flex-wrap: wrap; align-items: center;">
+            <button class="btn" id="scan-btn" style="min-width: 12rem;" onclick="${scanMode === 'bulk' ? 'doBulkScan()' : 'doScan()'}">${scanMode === 'dual' ? 'Combine & Scan ▶' : scanMode === 'bulk' ? 'Scan All ▶' : 'Scan ▶'}</button>
+            <button class="btn-ghost" onclick="clearScanInputs()" style="padding: 0 1.25rem;">Clear</button>
+            <label class="flex items-center gap-8" style="font-size: 0.95rem; color: #888; margin-left: auto; cursor: pointer;">
+              <input type="checkbox" id="autoprint-toggle" ${project.autoprint ? "checked" : ""} 
+                onchange="toggleAutoprint(this.checked)" style="width: auto;" />
+              auto-print labels
+            </label>
+          </div>
+          <div style="font-size: 10px; color: #666; margin-top: 10px; letter-spacing: 0.5px;">
+            ⌘/Ctrl + Enter to scan · Engine: ${state.engine.toUpperCase()} · Default cap: ${project.defaultCap}
+          </div>
+        </div>
+        <div id="result-card-container"></div>
+        
+        <div class="card" style="margin-top: 24px; padding: 16px;">
+          <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Import CSV File</div>
+          <div style="font-size: 11px; color: #888; margin-bottom: 12px; line-height: 1.5;">
+            Upload an Excel-exported CSV to bulk import scans into this project. Your CSV must have headers (e.g. "Part Number", "Tray", "Brand").
+          </div>
+          <div class="flex items-center gap-12">
+            <input type="file" id="csv-upload" accept=".csv" style="font-size: 11px; color: #fff; width: 100%; max-width: 250px;" />
+            <button class="btn" style="padding: 6px 14px; font-size: 11px;" onclick="handleCSVImport()">Import</button>
+          </div>
+        </div>
+        
+      </div>
+      
+      <div>
+        <h1 class="h">Recent · ${getProjectStickCount(session.currentProjectId)} sticks</h1>
+        <div class="card" style="padding: 0; overflow: hidden; max-height: calc(100vh - 220px); overflow-y: auto;">
+          ${projectScans.length === 0 ? `
+            <div class="empty" style="padding: 32px;">
+              <div style="font-size: 14px;">No scans yet</div>
+              <div style="font-size: 12px; color: #666; margin-top: 4px;">Scan a stick to begin</div>
+            </div>
+          ` : projectScans.slice(0, 25).map(s => {
+            const u = state.users.find(u => u.id === s.userId);
+            const tray = state.trays.find(t => t.id === s.trayId);
+            return `
+              <div style="padding: 1rem 1.25rem; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 0.75rem;">
+                <div class="avatar" style="background: ${u?.color || '#555'}; font-size: 0.9rem;">${u?.name.charAt(0).toUpperCase() || '?'}</div>
+                <div style="flex: 1; min-width: 0;">
+                  <div class="mono truncate" style="font-size: 1rem; color: #fff; font-weight: 600;">${escapeHtml(s.result.partNumber || s.scan.slice(0, 30))}</div>
+                  <div style="font-size: 0.85rem; color: #888; margin-top: 0.25rem;">
+                    Tray #${tray?.trayNum} · ${timeAgo(s.ts)}
+                    ${tray && state.users.find(u2 => u2.id == tray.ownerUserId) ? ` · <span style="color: ${state.users.find(u2 => u2.id == tray.ownerUserId).color}; opacity: 0.8; font-weight: 700;">${state.users.find(u2 => u2.id == tray.ownerUserId).name}</span>` : ""}
+                  </div>
+                  ${s.result.serial ? `<div class="mono" style="font-size: 0.85rem; color: #3ed685; margin-top: 0.125rem;">S/N: ${escapeHtml(s.result.serial)}</div>` : ''}
+                </div>
+                <span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'}; font-size: 0.75rem;">${s.result.brand}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Wire up keyboard shortcut
+  // Auto-focus: in dual mode focus serial if part is filled
+  if (scanMode === 'dual') {
+    const si = document.getElementById('serial-input');
+    if (si) si.focus();
+  } else {
+    const ti = document.getElementById('scan-input');
+    if (ti) ti.focus();
+  }
+  const ti = document.getElementById("scan-input");
+  if (ti) ti.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey && scanMode !== 'bulk') {
+      e.preventDefault();
+      if (scanMode === 'dual') {
+        const si2 = document.getElementById('serial-input');
+        if (si2 && !si2.value.trim() && document.activeElement === ti) { si2.focus(); return; }
+      }
+      doScan();
+    }
+  });
+  const si = document.getElementById("serial-input");
+  if (si) si.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doScan(); }
+  });
+
+  // Persist the last result card if it exists (prevents wipeout during background refreshes)
+  if (session.lastScan && session.lastAssignment) {
+    renderResultCard(session.lastScan, session.lastAssignment);
+  }
+}
+
+function setScanMode(mode) { scanMode = mode; renderScanner(); }
+function clearScanInputs() {
+  const si = document.getElementById("scan-input");
+  const sr = document.getElementById("serial-input");
+  if (si) si.value = '';
+  if (sr) sr.value = '';
+}
+
+async function toggleAutoprint(checked) {
+  const p = state.projects.find(p => p.id == session.currentProjectId);
+  if (p) { 
+    p.autoprint = checked; 
+    await dbSave('projects', 'update', { updates: { autoprint: checked }, id: p.id }, 'id');
+  }
+}
+
+function renderResultCard(r, tray) {
+  const brandMeta = BRAND_META[r.brand] || BRAND_META.Unknown;
+  const genMeta = GEN_META[r.generation] || GEN_META.Unknown;
+  const owner = tray ? state.users.find(u => u.id == tray.ownerUserId) : null;
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+
+  document.getElementById("result-card-container").innerHTML = `
+    <div class="card" style="margin-top: 1.5rem; padding: 0; overflow: hidden; animation: slide-in 0.3s ease-out; border: 2px solid ${brandMeta.hex};">
+      <div style="padding: 1.5rem;">
+        <div class="flex justify-between items-start" style="margin-bottom: 0.75rem;">
+          <span class="badge" style="background: ${r.isDuplicate ? '#3a1520' : '#0a2818'}; color: ${r.isDuplicate ? '#ff6b8a' : '#3ed685'}; font-size: 0.85rem; padding: 0.375rem 0.75rem;">
+            ${r.isDuplicate ? 'DUPLICATE SCAN' : 'NEW SCAN SUCCESS'}
+          </span>
+          <div style="text-align: right; font-size: 0.85rem; color: #888;">${new Date().toLocaleTimeString()}</div>
+        </div>
+        <div class="mono" style="font-size: 1.5rem; font-weight: 800; color: #FFD700; margin-bottom: 1rem; word-break: break-all; line-height: 1.2;">
+          ${escapeHtml(r.partNumber || "(no part)")}
+        </div>
+        <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 1.5rem;">
+          <span class="pill pill-large" style="background: ${brandMeta.hex};">${escapeHtml(r.brand)}</span>
+          <span class="pill pill-large" style="background: ${genMeta.bg}; color: ${genMeta.fg};">${escapeHtml(r.generation)}</span>
+          <span class="pill pill-large" style="background: #0a2818; color: #3ed685;">CONF ${Math.round((r.confidence || 0) * 100)}%</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; font-size: 0.95rem;">
+          <div>
+            <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">Serial</div>
+            <div class="mono" style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.serial || "\u2014")}</div>
+          </div>
+          <div>
+            <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">Label</div>
+            <div style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.label || "\u2014")}</div>
+          </div>
+        </div>
+      </div>
+      <div style="background: #15151c; padding: 1rem 1.5rem; border-top: 1px solid #2a2a35; display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <div style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Tray assignment</div>
+          <div style="font-size: 1.25rem; font-weight: 800; color: #3ed685; margin-top: 0.125rem;">
+            #${tray?.trayNum}
+            <span style="font-size: 0.9rem; color: #888; margin-left: 0.5rem; font-weight: 500;">${tray?.sticks.length}/${tray?.capacity} sticks</span>
+          </div>
+        </div>
+        <div class="flex gap-12">
+          <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.5rem 1rem; min-height: 2.5rem;" onclick="printTrayLabelById('${tray?.id}')">🖨 Print label</button>
+          ${project.mode === "separate" && owner ? `<div style="font-size: 0.9rem; color: #888; align-self: center;">owner: <span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span></div>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let trayFilter = "all";
+let expandedTrays = new Set();
+function toggleTrayExpand(trayId) {
+  if (expandedTrays.has(trayId)) expandedTrays.delete(trayId);
+  else expandedTrays.add(trayId);
+  renderTraysPage();
+}
+
+function setTrayFilter(f) { trayFilter = f; renderTraysPage(); }
+
+function renderTraysPage() {
+  const q = globalSearchQuery.toLowerCase().trim();
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  const visible = projectTrays.filter(t => {
+    if (trayFilter === "mine" && project.mode === "separate" && t.ownerUserId != session.currentUser.id) return false;
+    if (trayFilter === "full" && t.sticks.length < t.capacity) return false;
+    if (trayFilter === "active" && t.sticks.length >= t.capacity) return false;
+    if (q) {
+      if (!t.partNumber.toLowerCase().includes(q) && t.trayNum.toString() !== q) return false;
+    }
+    return true;
+  }).sort((a, b) => a.trayNum - b.trayNum);
+
+  const filterBtns = [
+    { id: "all", label: "All" },
+    ...(project.mode === "separate" ? [{ id: "mine", label: "Mine" }] : []),
+    { id: "active", label: "Active" },
+    { id: "full", label: "Full" },
+  ];
+
+  document.getElementById("page-content").innerHTML = `
+    <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
+      <h1 class="h" style="margin-bottom: 0;">Trays · ${projectTrays.length}</h1>
+      <div class="flex gap-12">
+        ${filterBtns.map(f => `<button onclick="setTrayFilter('${f.id}')" style="background: ${trayFilter === f.id ? '#FFD700' : '#1a1a22'}; color: ${trayFilter === f.id ? '#1a1a2e' : '#888'}; border: 0; padding: 0.6rem 1.25rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 700; min-height: 2.5rem;">${f.label}</button>`).join("")}
+      </div>
+    </div>
+    ${visible.length === 0 ? `<div class="empty">No trays match this filter</div>` : `
+      <div class="tray-grid">
+        ${visible.map(t => {
+          const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+          const pct = Math.min(100, (t.sticks.length / t.capacity) * 100);
+          const isFull = t.sticks.length >= t.capacity;
+          const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
+          const barColor = isFull ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
+          const isExp = expandedTrays.has(String(t.id));
+          const tScans = isExp ? state.scans.filter(s => s.trayId == t.id).sort((a,b) => a.ts - b.ts) : [];
+          
+          return `
+            <div class="tray-card">
+              <div style="position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: ${isFull ? '#ff6b8a' : bm.hex};"></div>
+              
+              <div class="flex justify-between items-start" style="margin-bottom: 1.25rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.25rem; cursor: pointer;" onclick="openTrayInventoryModal('${t.id}')" title="Click to view full inventory">
+                  <div style="font-size: 1.75rem; font-weight: 900; color: #FFD700; line-height: 1;">#${t.trayNum}</div>
+                  <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;">TRAY NUMBER</div>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+                  <span class="badge ${isFull ? 'badge-full' : 'badge-active'}" style="padding: 0.4rem 0.75rem; border-radius: 0.5rem;">${isFull ? 'FULL' : 'ACTIVE'}</span>
+                  ${owner ? `
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <span style="font-size: 0.75rem; font-weight: 700; color: ${owner.color}; opacity: 0.9;">${escapeHtml(owner.name)}</span>
+                      <div class="avatar avatar-xs" style="background: ${owner.color};">${owner.name.charAt(0).toUpperCase()}</div>
+                    </div>
+                  ` : ""}
+                </div>
+              </div>
+              
+              <div class="mono" style="font-size: 1rem; font-weight: 700; color: #fff; word-break: break-all; margin-bottom: 0.75rem; min-height: 2.5rem; line-height: 1.3;">
+                ${escapeHtml(t.partNumber)}
+              </div>
+              
+              <div class="flex gap-8" style="margin-bottom: 1.25rem;">
+                <span class="pill" style="background: ${bm.hex}; padding: 0.35rem 0.6rem; font-size: 0.75rem;">${escapeHtml(t.brand)}</span>
+                <span class="pill" style="background: ${GEN_META[t.generation]?.bg || '#1a1a22'}; color: ${GEN_META[t.generation]?.fg || '#888'}; padding: 0.35rem 0.6rem; font-size: 0.75rem;">${escapeHtml(t.generation)}</span>
+              </div>
+              
+              <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1.25rem;">
+                <div class="flex justify-between items-end" style="margin-bottom: 0.5rem;">
+                  <div style="font-size: 0.75rem; color: #888; font-weight: 600;">OCCUPANCY</div>
+                  <div style="font-size: 1.1rem; font-weight: 800; color: #fff;">${t.sticks.length} <span style="font-size: 0.8rem; color: #666; font-weight: 500;">/ ${t.capacity}</span></div>
+                </div>
+                <div class="tray-progress" style="margin: 0;"><div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div></div>
+              </div>
+              
+              <div class="flex gap-8" style="display: grid; grid-template-columns: repeat(3, 1fr) 44px; gap: 0.5rem;">
+                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="openTrayEditModal('${t.id}')">Edit</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="promptMergeTray('${t.id}')">Merge</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem;" onclick="printTrayLabelById('${t.id}')">Print</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 0.8rem; min-height: 2.5rem; border-radius: 0.625rem; background: ${isExp ? '#2a2a35' : 'transparent'};" onclick="toggleTrayExpand('${t.id}')">${isExp ? 'Hide' : 'View'}</button>
+                <button class="btn-ghost" style="padding: 0; font-size: 1rem; color: #ff6b8a; border-color: rgba(255, 107, 138, 0.2); min-height: 2.5rem; border-radius: 0.625rem;" onclick="confirmDeleteTray('${t.id}')">🗑</button>
+              </div>
+              
+              ${isExp ? `
+                <div style="margin-top: 1.25rem; border-top: 1px solid #2a2a35; padding-top: 1rem; animation: slide-in 0.2s ease-out;">
+                  <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.75rem;">Sticks (${t.sticks.length})</div>
+                  <div style="max-height: 200px; overflow-y: auto; padding-right: 4px;">
+                    ${tScans.length === 0 ? '<div style="padding: 1rem; color: #666; text-align: center; font-size: 0.85rem;">Empty tray</div>' : tScans.map((s, idx) => `
+                      <div class="flex justify-between items-center" style="padding: 0.6rem 0; border-bottom: 1px solid #15151c; font-size: 0.85rem;">
+                        <div class="mono truncate" style="color: #ccc; flex: 1;">
+                          <span style="color: #888;">${idx + 1}.</span> 
+                          <span style="color: #FFD700; font-weight: 700;">${escapeHtml(s.result?.partNumber || 'UNKNOWN')}</span>
+                          <span style="color: #666; margin: 0 4px;">·</span>
+                          <span style="font-size: 0.75rem;">${escapeHtml(s.result?.serial || 'NO S/N')}</span>
+                        </div>
+                        <div class="flex gap-8">
+                           <button onclick="editStick('${t.id}', ${idx})" style="background: transparent; border: 0; color: #4fa3ff; padding: 0.25rem; font-size: 0.75rem; font-weight: 700;">EDIT</button>
+                           <button onclick="moveStick('${t.id}', ${idx})" style="background: transparent; border: 0; color: #FFD700; padding: 0.25rem; font-size: 0.75rem; font-weight: 700;">MOVE</button>
+                        </div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ""}
+            </div>`;
+        }).join("")}
+      </div>
+    `}
+  `;
+}
+
+async function doBulkScan() {
+  const input = document.getElementById("scan-input");
+  const btn = document.getElementById("scan-btn");
+  const lines = input.value.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length === 0) { showToast('Paste scan data (one per line)', '#ff6b8a'); return; }
+  
+  btn.textContent = `Processing 0/${lines.length}...`;
+  btn.disabled = true;
+  window.isBulkScanning = true;
+  let success = 0;
+  for (let i = 0; i < lines.length; i++) {
+    btn.textContent = `Processing ${i+1}/${lines.length}...`;
+    const scan = lines[i];
+    const result = await classify(scan);
+    if (!result || !result.partNumber) continue;
+    
+    let assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
+    if (!assignment) continue;
+    
+    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
+    const newScan = {
+      id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+      ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
+    };
+    if (assignment.isNew) {
+      const newTrayData = { ...assignment.tray, sticks: [scanId] };
+      state.trays.push(newTrayData);
+      state.trayCounters[session.currentProjectId] = assignment.newNum;
+      await dbSave('trays', 'insert', newTrayData);
+    } else {
+      const tray = state.trays.find(t => t.id == assignment.tray.id);
+      tray.sticks.push(scanId);
+      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+    }
+    state.scans.unshift(newScan);
+    await dbSave('scans', 'insert', newScan);
+    
+    session.lastScan = newScan;
+    session.lastAssignment = assignment;
+    success++;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  
+  window.isBulkScanning = false;
+  btn.textContent = 'Scan All \u25b6';
+  btn.disabled = false;
+  input.value = '';
+  showToast(`\u2713 Bulk scan: ${success}/${lines.length} processed`, '#3ed685');
+  renderScanner();
+}
+
+async function doScan() {
+  const input = document.getElementById("scan-input");
+  const btn = document.getElementById("scan-btn");
+  let scan = input.value.trim();
+  
+  if (scanMode === 'dual') {
+    const serialInput = document.getElementById("serial-input");
+    const partScan = scan;
+    const serialScan = serialInput ? serialInput.value.trim() : '';
+    if (!partScan) { showToast("Enter the Part Number scan", "#ff6b8a"); return; }
+    scan = `(P)${partScan}`;
+    if (serialScan) scan += ` (S)${serialScan}`;
+  }
+  
+  if (!scan) return;
+  btn.textContent = "Analyzing…";
+  btn.disabled = true;
+  
+  const result = await classify(scan);
+  if (!result) {
+    showToast("Classification failed", "#ff6b8a");
+    btn.textContent = "Scan ▶"; btn.disabled = false;
+    return;
+  }
+  const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
+  if (!assignment) {
+    showToast("No part number — cannot assign tray", "#ff6b8a");
+    btn.textContent = "Scan ▶"; btn.disabled = false;
+    return;
+  }
+  
+  const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+  const newScan = {
+    id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+    ts: Date.now(), scan, result, trayId: assignment.tray.id,
+  };
+  
+  if (assignment.isNew) {
+    state.trays.push({ ...assignment.tray, sticks: [scanId] });
+    state.trayCounters[session.currentProjectId] = assignment.newNum;
+    await dbSave('trays', 'insert', { ...assignment.tray, sticks: [scanId] });
+  } else {
+    const tray = state.trays.find(t => t.id == assignment.tray.id);
+    tray.sticks.push(scanId);
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+  }
+  state.scans.unshift(newScan);
+  await dbSave('scans', 'insert', newScan);
+  
+  input.value = "";
+  btn.textContent = "Scan ▶"; btn.disabled = false;
+  
+  const trayN = assignment.tray.trayNum || assignment.newNum;
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  
+  session.lastScan = newScan;
+  session.lastAssignment = assignment;
+  
+  renderResultCard(newScan.result, state.trays.find(t => t.id == assignment.tray.id));
+  
+  if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
+  else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
+  else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
+  
+  if (assignment.isNew && project.autoprint) {
+    setTimeout(() => {
+      const tray = state.trays.find(t => t.id == assignment.tray.id);
+      printTrayLabel(tray);
+    }, 400);
+  }
+  renderScanner();
+}
+
+async function openTrayEditModal(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 12px;">Edit Tray #${tray.trayNum}</h2>
+    
+    <div class="field">
+      <div class="label">Part Number</div>
+      <input type="text" id="edit-tray-part" value="${escapeHtml(tray.partNumber)}" />
+    </div>
+
+    <div class="field">
+      <div class="label">Brand</div>
+      <select id="edit-tray-brand">
+        ${Object.keys(BRAND_META).map(b => `<option value="${b}" ${tray.brand === b ? 'selected' : ''}>${b}</option>`).join("")}
+      </select>
+    </div>
+
+    <div class="field">
+      <div class="label">Generation</div>
+      <select id="edit-tray-gen">
+        ${Object.keys(GEN_META).map(g => `<option value="${g}" ${tray.generation === g ? 'selected' : ''}>${g}</option>`).join("")}
+      </select>
+    </div>
+
+    <div class="field">
+      <div class="label">Label / Description</div>
+      <input type="text" id="edit-tray-label" value="${escapeHtml(tray.label || '')}" />
+    </div>
+
+    <div class="field">
+      <div class="label">Capacity (sticks)</div>
+      <input type="number" id="edit-tray-cap" value="${tray.capacity}" min="${tray.sticks.length}" max="500" />
+    </div>
+
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1.5rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="saveTrayEdit('${tray.id}')">Save Changes</button>
+    </div>
+  `);
+}
+
+async function saveTrayEdit(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+
+  const part = document.getElementById("edit-tray-part").value.trim();
+  const brand = document.getElementById("edit-tray-brand").value;
+  const gen = document.getElementById("edit-tray-gen").value;
+  const label = document.getElementById("edit-tray-label").value.trim();
+  const cap = parseInt(document.getElementById("edit-tray-cap").value) || tray.capacity;
+
+  if (!part) return showToast("Part number required", "#ff6b8a");
+
+  tray.partNumber = part;
+  tray.brand = brand;
+  tray.generation = gen;
+  tray.label = label;
+  tray.capacity = cap;
+
+  await dbSave('trays', 'update', { 
+    updates: { 
+      partNumber: part, 
+      brand: brand, 
+      generation: gen, 
+      label: label, 
+      capacity: cap 
+    }, 
+    id: tray.id 
+  }, 'id');
+
+  hideModal();
+  showToast(`Tray #${tray.trayNum} updated`, "#3ed685");
+  
+  if (session.page === 'trays') renderTraysPage();
+  else if (session.page === 'master') renderMasterPage();
+  else if (session.page === 'scanner') renderScanner();
+}
+
+function confirmDeleteTray(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+  showModal(`
+    <h2 class="h2" style="color: #ff6b8a; margin-bottom: 12px;">Delete Tray #${tray.trayNum}?</h2>
+    <div class="mono" style="font-size: 0.85rem; color: #888; margin-bottom: 0.75rem;">${escapeHtml(tray.partNumber)}</div>
+    <div style="font-size: 0.95rem; color: #e8e8ee; margin-bottom: 1.5rem; line-height: 1.6;">
+      This will permanently remove <b style="color: #ff6b8a;">${tray.sticks.length} scan(s)</b> from this tray.<br>
+      Tray numbers will <b>not</b> be automatically re-shuffled.
+    </div>
+    <div class="flex gap-12" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" style="background: #ff6b8a; color: #fff;" onclick="deleteTray('${tray.id}')">Delete tray</button>
+    </div>
+  `);
+}
+
+async function deleteTray(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+  const removedScanIds = new Set(tray.sticks);
+  state.scans = state.scans.filter(s => !removedScanIds.has(s.id));
+  state.trays = state.trays.filter(t => t.id != trayId);
+  if (useSupabase && sb) {
+    try {
+      if (removedScanIds.size > 0) await sb.from('scans').delete().in('id', [...removedScanIds]);
+      await sb.from('trays').delete().eq('id', trayId);
+    } catch (err) { console.warn('Delete tray DB error:', err); }
+  }
+  saveLocalState();
+  hideModal();
+  showToast(`Tray #${tray.trayNum} deleted`, '#ff6b8a');
+  renderTraysPage();
+}
+
+async function editStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scanId = tray.sticks[stickIndex];
+  const scan = state.scans.find(s => s.id == scanId);
+  if (!scan) return;
+  const newPart = prompt(`Edit Part Number:`, scan.result?.partNumber || "");
+  if (newPart !== null && newPart.trim() !== "") {
+    const p = newPart.trim().toUpperCase();
+    if (p === (scan.result?.partNumber || "").toUpperCase()) return;
+    scan.result.partNumber = p;
+    await dbSave('scans', 'update', { updates: { result: scan.result }, id: scan.id }, 'id');
+    const assignment = assignTray(session.currentProjectId, session.currentUser.id, scan.result);
+    if (!assignment) { renderTraysPage(); return; }
+    tray.sticks.splice(stickIndex, 1);
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+    if (assignment.isNew) {
+      const newTray = { ...assignment.tray, sticks: [scanId] };
+      state.trays.push(newTray);
+      state.trayCounters[session.currentProjectId] = assignment.newNum;
+      await dbSave('trays', 'insert', newTray);
+    } else {
+      const targetTray = state.trays.find(t => t.id == assignment.tray.id);
+      targetTray.sticks.push(scanId);
+      await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+    }
+    scan.trayId = assignment.tray.id;
+    await dbSave('scans', 'update', { updates: { trayId: assignment.tray.id }, id: scan.id }, 'id');
+    showToast(`Stick moved to Tray #${assignment.tray.trayNum || assignment.newNum}`, '#3ed685');
+    renderTraysPage();
+  }
+}
+
+function openTrayInventoryModal(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+  const tScans = state.scans.filter(s => s.trayId == tray.id).sort((a,b) => a.ts - b.ts);
+  
+  const inventoryText = tScans.map((s, i) => `${i+1}. ${s.result?.partNumber} | SN: ${s.result?.serial || 'N/A'}`).join('\n');
+
+  showModal(`
+    <div class="flex items-center justify-between" style="margin-bottom: 1.5rem; border-bottom: 1px solid #2a2a35; padding-bottom: 1rem;">
+      <div>
+        <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700;">Inventory Detail</div>
+        <h2 class="h2" style="color: #FFD700;">Tray #${tray.trayNum} · ${tScans.length} sticks</h2>
+      </div>
+      <button class="btn-ghost" onclick="copyToClipboard(\`${inventoryText.replace(/`/g, '\\`')}\`)">📋 Copy List</button>
+    </div>
+    
+    <div style="background: #15151c; border-radius: 0.75rem; padding: 0.5rem; max-height: 60vh; overflow-y: auto; border: 1px solid #2a2a35;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+        <thead>
+          <tr style="text-align: left; color: #666; font-size: 0.7rem; text-transform: uppercase; border-bottom: 1px solid #2a2a35;">
+            <th style="padding: 0.75rem;">#</th>
+            <th style="padding: 0.75rem;">Part Number</th>
+            <th style="padding: 0.75rem;">Serial Number</th>
+            <th style="padding: 0.75rem; text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tScans.map((s, idx) => `
+            <tr style="border-bottom: 1px solid #1a1a22;">
+              <td style="padding: 0.75rem; color: #555; font-family: monospace;">${idx + 1}</td>
+              <td style="padding: 0.75rem; color: #FFD700; font-weight: 700; font-family: monospace; word-break: break-all;">${escapeHtml(s.result?.partNumber || 'UNKNOWN')}</td>
+              <td style="padding: 0.75rem; color: #ccc; font-family: monospace; word-break: break-all;">${escapeHtml(s.result?.serial || 'NO S/N')}</td>
+              <td style="padding: 0.75rem; text-align: right;">
+                <div class="flex gap-8" style="justify-content: flex-end;">
+                  <button onclick="editStick('${tray.id}', ${idx}); hideModal();" style="background: transparent; border: 0; color: #4fa3ff; font-size: 0.7rem; font-weight: 700; cursor: pointer;">EDIT</button>
+                  <button onclick="moveStick('${tray.id}', ${idx}); hideModal();" style="background: transparent; border: 0; color: #FFD700; font-size: 0.7rem; font-weight: 700; cursor: pointer;">MOVE</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      ${tScans.length === 0 ? '<div style="padding: 2rem; text-align: center; color: #666;">This tray is currently empty.</div>' : ''}
+    </div>
+    
+    <div class="flex justify-end" style="margin-top: 1.5rem;">
+      <button class="btn" onclick="hideModal()">Close</button>
+    </div>
+  `);
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    showToast("Inventory copied to clipboard!", "#3ed685");
+  });
+}
+
+async function promptMergeTray(sourceTrayId) {
+  const sourceTray = state.trays.find(t => t.id == sourceTrayId);
+  if (!sourceTray) return;
+  const targetNum = prompt(`Merge all sticks from Tray #${sourceTray.trayNum} into which Tray Number?`);
+  if (!targetNum) return;
+  const num = parseInt(targetNum, 10);
+  if (isNaN(num)) return showToast("Invalid tray number", "#ff6b8a");
+  
+  const project = state.projects.find(p => p.id == sourceTray.projectId);
+  const targetTray = state.trays.find(t => t.projectId == sourceTray.projectId && t.trayNum == num && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId));
+  
+  if (!targetTray) return showToast(`Target Tray #${num} not found`, "#ff6b8a");
+  if (targetTray.id == sourceTray.id) return showToast("Cannot merge a tray into itself", "#ff6b8a");
+  
+  if (!confirm(`Merge Tray #${sourceTray.trayNum} into Tray #${targetTray.trayNum}?\n\nTarget part: ${targetTray.partNumber}\nSource part: ${sourceTray.partNumber}`)) return;
+  
+  showToast("Merging trays...", "#FFD700");
+  
+  // Move all stick references
+  const uniqueSticks = [...new Set([...targetTray.sticks, ...sourceTray.sticks])];
+  targetTray.sticks = uniqueSticks;
+  
+  // Update all scans to point to new tray (This is the Source of Truth)
+  for (const sId of sourceTray.sticks) {
+    const scan = state.scans.find(s => s.id == sId);
+    if (scan) {
+      scan.trayId = targetTray.id;
+      await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
+    }
+  }
+  
+  // Save target tray state
+  await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+  
+  // Remove source tray
+  state.trays = state.trays.filter(t => t.id != sourceTray.id);
+  await dbSave('trays', 'delete', { id: sourceTray.id }, 'id');
+  
+  showToast(`Successfully merged into Tray #${targetTray.trayNum}`, "#3ed685");
+  renderTraysPage();
+}
+
+async function moveStick(trayId, stickIndex) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray || !tray.sticks[stickIndex]) return;
+  const scan = state.scans.find(s => s.id == tray.sticks[stickIndex]);
+  if (!scan) return;
+  const newTrayNumStr = prompt(`Move stick (${scan.result?.partNumber}) to which Tray Number?`);
+  if (!newTrayNumStr) return;
+  const newTrayNum = parseInt(newTrayNumStr, 10);
+  if (isNaN(newTrayNum)) return alert("Invalid tray number");
+  if (newTrayNum === tray.trayNum) return;
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  let targetTray = state.trays.find(t => t.projectId == project.id && t.trayNum == newTrayNum);
+  if (targetTray) {
+    if (targetTray.partNumber.toUpperCase() !== scan.result.partNumber.toUpperCase()) {
+      if (!confirm(`Warning: Target Tray #${newTrayNum} holds a different part number (${targetTray.partNumber}). Move anyway?`)) return;
+    }
+  } else {
+    targetTray = {
+      id: `t_${project.id}_${newTrayNum}_${Date.now()}`,
+      projectId: project.id, ownerUserId: session.currentUser.id,
+      partNumber: scan.result.partNumber, label: scan.result.label || "", brand: scan.result.brand || "Unknown", generation: scan.result.generation || "Unknown",
+      trayNum: newTrayNum, capacity: project.defaultCap, sticks: [],
+      createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
+    };
+    state.trays.push(targetTray);
+    await dbSave('trays', 'insert', targetTray);
+  }
+  tray.sticks.splice(stickIndex, 1);
+  await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+  targetTray.sticks.push(scan.id);
+  await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+  scan.trayId = targetTray.id;
+  await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
+  renderTraysPage();
+}
+
+let historyFilter = "all";
+function setHistoryFilter(f) { historyFilter = f; renderHistoryPage(); }
+
+function renderHistoryPage() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectScans = state.scans.filter(s => s.projectId == project.id);
+  const q = globalSearchQuery.toLowerCase().trim();
+  const filtered = (historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId == historyFilter)).filter(s => {
+    if (!q) return true;
+    const trayNum = state.trays.find(t => t.id == s.trayId)?.trayNum?.toString() || "";
+    return (s.result?.partNumber || "").toLowerCase().includes(q) || trayNum === q;
+  });
+  
+  document.getElementById("page-content").innerHTML = `
+    <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
+      <h1 class="h" style="margin-bottom: 0;">History · ${getProjectStickCount(project.id)} sticks</h1>
+      <div class="flex gap-12">
+        <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.6rem 1.25rem; min-height: 2.5rem;" onclick="exportCSV()">📥 Export CSV</button>
+        <select onchange="setHistoryFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.9rem; min-height: 2.5rem; width: auto;">
+          <option value="all">All members</option>
+          ${state.users.filter(u => project.memberIds.includes(u.id)).map(u => 
+            `<option value="${u.id}" ${historyFilter === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`
+          ).join("")}
+        </select>
+      </div>
+    </div>
+    
+    ${filtered.length === 0 ? `
+      <div class="empty">No scans yet</div>
+    ` : `
+      <div class="card" style="padding: 0; overflow: hidden; overflow-x: auto;">
+        <div class="history-row history-head">
+          <div>Time</div><div>Part Number</div><div>Serial</div><div>Brand</div><div>Gen</div><div>Tray</div><div>User</div>
+        </div>
+        ${filtered.slice(0, 100).map(s => {
+          const u = state.users.find(u2 => u2.id == s.userId);
+          const tray = state.trays.find(t => t.id == s.trayId);
+          return `
+            <div class="history-row">
+              <div style="color: #888;">${new Date(s.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
+              <div class="mono truncate" style="color: #fff; font-weight: 600;">${escapeHtml(s.result.partNumber)}</div>
+              <div class="mono truncate" style="color: #3ed685;">${escapeHtml(s.result.serial || "-")}</div>
+              <div><span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span></div>
+              <div><span class="pill" style="background: ${GEN_META[s.result.generation]?.bg || '#1a1a22'}; color: ${GEN_META[s.result.generation]?.fg || '#888'};">${s.result.generation}</span></div>
+              <div style="color: #FFD700; font-weight: 700;">#${tray?.trayNum || "?"}</div>
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div class="avatar avatar-sm" style="background: ${u?.color || '#555'};">${u?.name.charAt(0).toUpperCase() || "?"}</div>
+                <span class="truncate" style="color: #888;">${escapeHtml(u?.name || "?")}</span>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `}
+  `;
+}
+
+function exportCSV() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectScans = state.scans.filter(s => s.projectId == project.id);
+  const filtered = historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId == historyFilter);
+  const headers = ['Timestamp','Part Number','Serial','Brand','Generation','Tray#','Scanned By','Label'];
+  const rows = filtered.map(s => {
+    const u = state.users.find(u => u.id == s.userId);
+    const tray = state.trays.find(t => t.id == s.trayId);
+    return [new Date(s.ts).toLocaleString(), s.result.partNumber||'', s.result.serial||'', s.result.brand||'', s.result.generation||'', tray?.trayNum||'', u?.name||'', s.result.label||'']
+      .map(v => `"${String(v).replace(/"/g, '""')}"`);
+  });
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${project.name}_history.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSV downloaded!', '#3ed685');
+}
+
+let masterFilter = "all";
+function setMasterFilter(f) { masterFilter = f; renderMasterPage(); }
+
+function renderMasterPage() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id).sort((a,b) => a.trayNum - b.trayNum);
+  const members = state.users.filter(u => project.memberIds.some(id => id == u.id));
+
+  // Brand Distribution
+  const brandCounts = {};
+  projectTrays.forEach(t => {
+    const b = t.brand || 'Unknown';
+    brandCounts[b] = (brandCounts[b] || 0) + t.sticks.length;
+  });
+  const totalSticks = Object.values(brandCounts).reduce((a,b)=>a+b,0);
+  const sortedBrands = Object.entries(brandCounts).sort((a,b)=>b[1]-a[1]);
+
+  const distributionBar = sortedBrands.map(([brand, count]) => {
+    const meta = BRAND_META[brand] || BRAND_META.Unknown;
+    const pct = (count / totalSticks * 100).toFixed(1);
+    return `<div style="width: ${pct}%; background: ${meta.hex}; height: 100%;" title="${brand}: ${count}"></div>`;
+  }).join('');
+  
+  const distributionLegend = sortedBrands.map(([brand, count]) => {
+    const meta = BRAND_META[brand] || BRAND_META.Unknown;
+    return `<div style="display: flex; align-items: center; gap: 4px; font-size: 0.7rem; color: #888;">
+      <div style="width: 8px; height: 8px; border-radius: 2px; background: ${meta.hex};"></div>
+      <span>${brand}: ${count}</span>
+    </div>`;
+  }).join('');
+
+  const userCards = members.map(u => {
+    const uSticks = projectTrays.filter(t => t.createdBy == u.id || t.ownerUserId == u.id).reduce((sum, t) => sum + t.sticks.length, 0);
+    const uTrays = projectTrays.filter(t => t.createdBy == u.id || t.ownerUserId == u.id).length;
+    return `<div style="background: #1a1a22; border-radius: 0.75rem; padding: 1rem 1.25rem; min-width: 10rem; border-left: 4px solid ${u.color};">
+      <div class="flex items-center gap-8" style="margin-bottom: 0.5rem;">
+        <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
+        <div><div style="font-weight: 700; color: #fff; font-size: 0.95rem;">${escapeHtml(u.name)}</div>
+        <div style="font-size: 0.75rem; color: #888; text-transform: uppercase;">${u.role}</div></div>
+      </div>
+      <div class="flex gap-12" style="margin-top: 0.5rem;">
+        <div><div style="font-size: 1.5rem; font-weight: 900; color: #fff;">${uSticks}</div><div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">sticks</div></div>
+        <div><div style="font-size: 1.5rem; font-weight: 900; color: #fff;">${uTrays}</div><div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">trays</div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const q = globalSearchQuery.toLowerCase().trim();
+  const filteredTrays = masterFilter === "all" ? projectTrays : projectTrays.filter(t => t.createdBy == masterFilter || t.ownerUserId == masterFilter);
+  const searchedTrays = filteredTrays.filter(t => {
+    if (!q) return true;
+    return t.partNumber.toLowerCase().includes(q) || t.trayNum.toString() === q;
+  });
+
+  const trayRows = searchedTrays.map(t => {
+    const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+    const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
+    const gm = GEN_META[t.generation] || GEN_META.Unknown;
+    const pct = (t.sticks.length / t.capacity * 100);
+    const barColor = t.sticks.length >= t.capacity ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
+    return `<div style="display: grid; grid-template-columns: 0.8fr 0.5fr 1.5fr 0.8fr 0.6fr 0.5fr 1.2fr; gap: 0.75rem; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #15151c; font-size: 0.9rem;">
+      <div>${owner ? `<span class="pill" style="background: ${owner.color}; font-size: 0.75rem;">${escapeHtml(owner.name)}</span>` : '-'}</div>
+      <div style="color: #FFD700; font-weight: 900; font-size: 1.1rem;">#${t.trayNum}</div>
+      <div class="mono truncate" style="color: #fff; font-weight: 600;">${escapeHtml(t.partNumber)}</div>
+      <div><span class="pill" style="background: ${bm.hex}; font-size: 0.75rem;">${escapeHtml(t.brand)}</span></div>
+      <div><span class="pill" style="background: ${gm.bg}; color: ${gm.fg}; font-size: 0.75rem;">${escapeHtml(t.generation)}</span></div>
+      <div style="color: #fff; font-weight: 700; text-align: center;">${t.sticks.length}</div>
+      <div class="flex items-center gap-8">
+        <div class="tray-progress" style="flex: 1;"><div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div></div>
+        <span style="font-size: 0.8rem; color: #888; min-width: 3.5rem;">${t.sticks.length}/${t.capacity}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById("page-content").innerHTML = `
+    <div style="background: #1a1a22; border-radius: 0.75rem; padding: 1rem; margin-bottom: 2rem; border: 1px solid #2a2a35;">
+      <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 0.75rem; letter-spacing: 0.05em;">Brand Distribution · System-wide</div>
+      <div style="height: 12px; border-radius: 6px; overflow: hidden; display: flex; background: #2a2a35; margin-bottom: 1rem;">
+        ${distributionBar}
+      </div>
+      <div class="flex gap-12" style="flex-wrap: wrap;">
+        ${distributionLegend}
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
+      <div>
+        <h1 class="h" style="margin-bottom: 0.25rem;">Master View · ${masterFilter === 'all' ? 'All Users' : escapeHtml(state.users.find(u=>u.id==masterFilter)?.name || '')}</h1>
+        <div style="font-size: 0.9rem; color: #888;">${totalSticks} sticks · ${projectTrays.length} trays</div>
+      </div>
+      <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.6rem 1.25rem; min-height: 2.5rem;" onclick="exportMasterCSV()">📥 Export All CSV</button>
+    </div>
+    <div class="flex gap-12" style="margin-bottom: 2rem; flex-wrap: wrap;">${userCards}</div>
+    <div>
+      <div class="flex items-center justify-between" style="margin-bottom: 1rem;">
+        <h2 class="h2">All Trays · ${searchedTrays.length}</h2>
+        <select onchange="setMasterFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-size: 0.9rem; min-height: 2.5rem;">
+          <option value="all" ${masterFilter==='all'?'selected':''}>All users</option>
+          ${members.map(u => `<option value="${u.id}" ${masterFilter==u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden; overflow-x: auto;">
+        <div style="display: grid; grid-template-columns: 0.8fr 0.5fr 1.5fr 0.8fr 0.6fr 0.5fr 1.2fr; gap: 0.75rem; padding: 0.75rem 1rem; background: #15151c; font-size: 0.8rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">
+          <div>User</div><div>Tray</div><div>Part Number</div><div>Brand</div><div>Gen</div><div>Sticks</div><div>Capacity</div>
+        </div>
+        ${trayRows || '<div style="padding: 2rem; text-align: center; color: #666;">No trays yet</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function exportMasterCSV() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id).sort((a,b) => a.trayNum - b.trayNum);
+  const headers = ['Tray#','Part Number','Brand','Generation','Sticks','Capacity','Owner','Date'];
+  const rows = projectTrays.map(t => {
+    const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+    return [t.trayNum, t.partNumber, t.brand, t.generation, t.sticks.length, t.capacity, owner?.name||'', new Date(t.createdAt).toLocaleDateString()]
+      .map(v => `"${String(v).replace(/"/g, '""')}"`);
+  });
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${project.name}_master.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Master CSV downloaded!', '#3ed685');
+}
+
+function renderAdminPage() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  document.getElementById("page-content").innerHTML = `
+    <h1 class="h">Admin · ${escapeHtml(project.name)}</h1>
+    <div class="stats" style="margin-bottom: 2rem;">
+      <div class="stat" style="border-top: 4px solid #3ed685;">
+        <div class="stat-label">Total sticks</div>
+        <div class="stat-value" style="color: #3ed685;">${getProjectStickCount(project.id)}</div>
+      </div>
+      <div class="stat" style="border-top: 4px solid #4fa3ff;">
+        <div class="stat-label">Active trays</div>
+        <div class="stat-value" style="color: #4fa3ff;">${projectTrays.filter(t => t.sticks.length < t.capacity).length}</div>
+      </div>
+      <div class="stat" style="border-top: 4px solid #ff6b8a;">
+        <div class="stat-label">Full trays</div>
+        <div class="stat-value" style="color: #ff6b8a;">${projectTrays.filter(t => t.sticks.length >= t.capacity).length}</div>
+      </div>
+      <div class="stat" style="border-top: 4px solid #FFD700;">
+        <div class="stat-label">Members</div>
+        <div class="stat-value" style="color: #FFD700;">${project.memberIds.length}</div>
+      </div>
+    </div>
+    <h2 class="h2" style="margin-bottom: 1rem;">Project members</h2>
+    <div class="card card-tight" style="margin-bottom: 2rem;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.75rem;">
+        ${state.users.filter(u => u.role !== "admin").map(u => {
+          const sel = project.memberIds.includes(u.id);
+          return `
+            <button onclick="toggleProjectMember('${project.id}','${u.id}')" 
+              style="text-align: left; border: ${sel ? '2px solid ' + u.color : '2px solid #2a2a35'}; background: ${sel ? '#15151c' : 'transparent'}; border-radius: 0.75rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; min-height: 3.5rem;">
+              <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
+              <div style="flex: 1; font-size: 0.95rem; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
+              ${sel ? `<span style="color: ${u.color}; font-weight: 700;">✓</span>` : ""}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+    <div style="margin-top: 2rem;">
+       <h2 class="h2" style="margin-bottom: 1rem;">CSV Import</h2>
+       <div class="card">
+         <div style="font-size: 0.9rem; color: #888; margin-bottom: 1rem;">Bulk upload sticks to this project.</div>
+         <input type="file" id="csv-upload" accept=".csv" style="display:none" onchange="handleCSVImport()">
+         <button class="btn" onclick="document.getElementById('csv-upload').click()">Upload CSV File</button>
+       </div>
+    </div>
+    <div style="margin-top: 2rem;">
+      <h2 class="h2" style="margin-bottom: 1rem; color: #ff6b8a;">Danger zone</h2>
+      <div class="card card-tight">
+        <button class="btn-ghost" onclick="if(confirm('Clear all scans/trays for THIS project?')){clearProjectData();}" style="border-color: #ffaa00; color: #ffaa00; width: 100%; min-height: 3rem; margin-bottom: 0.75rem;">Clear Project Data</button>
+        <button class="btn-ghost" onclick="promptDeleteProject(session.currentProjectId, 'current project')" style="border-color: #ff6b8a; color: #ff6b8a; width: 100%; min-height: 3rem;">Delete Entire Project</button>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleProjectMember(projectId, userId) {
+  const p = state.projects.find(p => p.id == projectId);
+  if (!p) return;
+  if (p.memberIds.some(id => id == userId)) p.memberIds = p.memberIds.filter(id => id != userId);
+  else p.memberIds.push(userId);
+  await dbSave('projects', 'update', { updates: { memberIds: p.memberIds }, id: p.id }, 'id');
+  renderAdminPage();
+}
+
+async function clearProjectData() {
+  const pId = session.currentProjectId;
+  if (!pId) return;
+  state.scans = state.scans.filter(s => s.projectId != pId);
+  state.trays = state.trays.filter(t => t.projectId != pId);
+  state.trayCounters[pId] = 0;
+  if (useSupabase) {
+    try {
+      await sb.from('scans').delete().eq('projectId', pId);
+      await sb.from('trays').delete().eq('projectId', pId);
+    } catch (e) { console.error(e); }
+  }
+  saveLocalState();
+  showToast("Project data cleared", "#FFD700");
+  renderAdminPage();
+}
+
+async function promptDeleteProject(pId, name) {
+  if (confirm(`Are you SURE you want to delete project "${name}"? This cannot be undone.`)) {
+    state.projects = state.projects.filter(p => p.id != pId);
+    state.scans = state.scans.filter(s => s.projectId != pId);
+    state.trays = state.trays.filter(t => t.projectId != pId);
+    if (useSupabase) {
+      try {
+        await sb.from('projects').delete().eq('id', pId);
+        await sb.from('scans').delete().eq('projectId', pId);
+        await sb.from('trays').delete().eq('projectId', pId);
+      } catch (e) { console.error(e); }
+    }
+    saveLocalState();
+    switchProject();
+  }
+}
+
+async function handleCSVImport() {
+  const fileInput = document.getElementById("csv-upload");
+  if (!fileInput.files || fileInput.files.length === 0) {
+    showToast("Please select a CSV file", "#ff6b8a");
+    return;
+  }
+  const file = fileInput.files[0];
+  const text = await file.text();
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 2) { showToast("CSV is empty or missing headers", "#ff6b8a"); return; }
+  
+  const parseLine = (line) => {
+    const result = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') inQuotes = !inQuotes;
+      else if (line[i] === ',' && !inQuotes) { result.push(cur.trim()); cur = ''; }
+      else cur += line[i];
+    }
+    result.push(cur.trim());
+    return result;
+  };
+  
+  const headers = parseLine(lines[0]);
+  const normHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+  
+  // Auto-detect indices
+  const idxPart = normHeaders.findIndex(h => h.includes('part'));
+  const idxTray = normHeaders.findIndex(h => h === 'tray' || h === 'traynumber');
+  const idxBrand = normHeaders.findIndex(h => h.includes('brand'));
+  const idxGen = normHeaders.findIndex(h => h.includes('gen'));
+  const idxSerial = normHeaders.findIndex(h => h.includes('serial'));
+  const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
+  const idxQty = normHeaders.findIndex(h => h.includes('qty') || h.includes('quantity'));
+  
+  const firstRow = lines.length > 1 ? parseLine(lines[1]) : [];
+  
+  const getOptions = (selectedIdx) => {
+    return `<option value="-1">-- Ignore / Not in CSV --</option>` + 
+           headers.map((h, i) => `<option value="${i}" ${i === selectedIdx ? 'selected' : ''}>[Col ${i+1}] ${escapeHtml(h)} (e.g. ${escapeHtml(firstRow[i] || '')})</option>`).join('');
+  };
+  
+  const modalHTML = `
+    <h2 class="h2" style="margin-bottom: 1rem;">Map CSV Columns</h2>
+    <div style="font-size: 0.9rem; color: #888; margin-bottom: 1.5rem;">
+      Please assign your CSV columns to the system fields.
+    </div>
+    
+    <div style="display: grid; gap: 1rem; margin-bottom: 1.5rem;">
+      <div>
+        <div class="label" style="color: #FFD700; font-size: 0.8rem; margin-bottom: 0.25rem;">Part Number * (Required)</div>
+        <select id="map-part" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxPart)}</select>
+      </div>
+      <div>
+        <div class="label" style="color: #FFD700; font-size: 0.8rem; margin-bottom: 0.25rem;">Tray Number * (Required)</div>
+        <select id="map-tray" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxTray)}</select>
+      </div>
+      <div>
+        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Brand</div>
+        <select id="map-brand" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxBrand)}</select>
+      </div>
+      <div>
+        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Generation (e.g. DDR4)</div>
+        <select id="map-gen" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxGen)}</select>
+      </div>
+      <div>
+        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Serial Number</div>
+        <select id="map-serial" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxSerial)}</select>
+      </div>
+      <div>
+        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Quantity</div>
+        <select id="map-qty" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxQty)}</select>
+      </div>
+      <div>
+        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">QR Scan Input (Raw string)</div>
+        <select id="map-scan" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxScan)}</select>
+      </div>
+    </div>
+    
+    <div class="flex items-center justify-between" style="margin-top: 1.5rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Scans</button>
+    </div>
+  `;
+  
+  window._pendingCSVImportLines = lines;
+  window._pendingCSVImportParseLine = parseLine;
+  showModal(modalHTML);
+}
+
+async function executeCSVImport() {
+  const lines = window._pendingCSVImportLines;
+  const parseLine = window._pendingCSVImportParseLine;
+  if (!lines || !parseLine) return;
+  
+  const idxPart = parseInt(document.getElementById("map-part").value, 10);
+  const idxTray = parseInt(document.getElementById("map-tray").value, 10);
+  const idxBrand = parseInt(document.getElementById("map-brand").value, 10);
+  const idxGen = parseInt(document.getElementById("map-gen").value, 10);
+  const idxSerial = parseInt(document.getElementById("map-serial").value, 10);
+  const idxScan = parseInt(document.getElementById("map-scan").value, 10);
+  const idxQty = parseInt(document.getElementById("map-qty").value, 10);
+  
+  if (idxPart === -1 || idxTray === -1) {
+    showToast("Part Number and Tray columns are required.", "#ff6b8a");
+    return;
+  }
+  
+  hideModal();
+  document.getElementById("page-content").innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 4rem;"><div style="color: #FFD700; font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">Importing CSV data...</div><div style="color: #888;">Please wait.</div></div>`;
+  
+  await new Promise(r => setTimeout(r, 50));
+  
+  let success = 0;
+  let skipped = 0;
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  let maxTrayNum = state.trayCounters[project.id] || 0;
+  
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    if (cols.length <= idxPart || cols.length <= idxTray) continue;
+    
+    const partNum = cols[idxPart];
+    if (!partNum || partNum === '#VALUE!') { skipped++; continue; }
+    
+    const trayNumRaw = parseInt(cols[idxTray], 10);
+    if (isNaN(trayNumRaw)) { skipped++; continue; }
+    maxTrayNum = Math.max(maxTrayNum, trayNumRaw);
+    
+    const brand = idxBrand >= 0 ? cols[idxBrand] : "Unknown";
+    const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen] : "Unknown";
+    const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial] : "";
+    const scanRaw = idxScan >= 0 ? cols[idxScan] : "";
+    let qty = 1;
+    if (idxQty >= 0) {
+      const parsedQty = parseInt(cols[idxQty], 10);
+      if (!isNaN(parsedQty) && parsedQty > 0) qty = parsedQty;
+    }
+    
+    let tray = state.trays.find(t => t.projectId == project.id && t.trayNum == trayNumRaw);
+    if (tray) {
+      if (tray.partNumber.toUpperCase() !== partNum.toUpperCase()) {
+        const replace = confirm(`Conflict in Tray #${trayNumRaw}!\n\nExisting part: ${tray.partNumber}\nCSV part: ${partNum}\n\nClick OK to REPLACE the tray's part number.\nClick Cancel to SKIP this row.`);
+        if (replace) {
+          tray.partNumber = partNum;
+          tray.brand = brand;
+          tray.generation = gen;
+        } else { skipped++; continue; }
+      }
+    } else {
+      tray = {
+        id: `t_${project.id}_${trayNumRaw}_${Date.now()}_${i}`,
+        projectId: project.id, ownerUserId: session.currentUser.id,
+        partNumber: partNum, label: "", brand, generation: gen,
+        trayNum: trayNumRaw, capacity: project.defaultCap, sticks: [],
+        createdAt: Date.now(), createdBy: session.currentUser.id,
+        projectName: project.name
+      };
+      state.trays.push(tray);
+      await dbSave('trays', 'insert', tray);
+    }
+    
+    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
+    const newScan = {
+      id: scanId, projectId: project.id, userId: session.currentUser.id,
+      ts: Date.now() + i, scan: scanRaw,
+      result: { partNumber: partNum, serial, brand, generation: gen, method: "csv_import", quantity: qty },
+      trayId: tray.id, quantity: qty
+    };
+    
+    for (let q = 0; q < qty; q++) {
+      tray.sticks.push(scanId);
+    }
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks, partNumber: tray.partNumber, brand: tray.brand, generation: tray.generation }, id: tray.id }, 'id');
+    
+    state.scans.unshift(newScan);
+    await dbSave('scans', 'insert', newScan);
+    success++;
+  }
+  
+  state.trayCounters[project.id] = maxTrayNum;
+  window._pendingCSVImportLines = null;
+  window._pendingCSVImportParseLine = null;
+  document.getElementById("csv-upload").value = "";
+  
+  showToast(`Import complete: ${success} scans added (${skipped} skipped).`, "#3ed685");
+  renderAdminPage();
+}
+
+function printTrayLabelById(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (tray) printTrayLabel(tray);
+}
+
+function printTrayLabel(tray) {
+  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
+  const labelHTML = buildLabelHTML(tray, brandColor);
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 12px;">Print Label · Tray #${tray.trayNum}</h2>
+    <div style="background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 1.5rem; display: flex; justify-content: center; box-shadow: inset 0 0 10px rgba(0,0,0,0.1);">
+      <div style="transform: scale(0.8); transform-origin: center;">
+        ${labelHTML}
+      </div>
+    </div>
+    <div style="font-size: 11px; color: #aaa; margin-bottom: 12px; padding: 10px; background: #15151c; border-radius: 8px; line-height: 1.5;">
+      <strong style="color: #FFD700;">Printer Setup:</strong> Ensure your <strong>Zebra GK420d</strong> is selected. Size: <strong>4" × 1.5"</strong>, Margins: <strong>None</strong>.
+    </div>
+    <div class="flex gap-12" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doPrintLabel('${tray.id}')">Send to printer</button>
+    </div>
+  `);
+}
+
+function doPrintLabel(trayId) {
+  const tray = state.trays.find(t => t.id == trayId);
+  if (!tray) return;
+  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
+  const labelHTML = buildLabelHTML(tray, brandColor);
+  document.getElementById("print-area").innerHTML = labelHTML;
+  document.getElementById("print-area").classList.add("show");
+  hideModal();
+  setTimeout(() => {
+    window.print();
+    setTimeout(() => {
+      document.getElementById("print-area").classList.remove("show");
+    }, 500);
+  }, 100);
+}
+
+function buildLabelHTML(tray, brandColor) {
+  const date = new Date(tray.createdAt).toLocaleDateString();
+  // Clean part number for barcode (remove special chars that might break Code128)
+  const barcodeText = tray.partNumber.toUpperCase().replace(/[^A-Z0-9\-]/gi, '');
+  // bwip-js settings for clear, tall, full-width barcode
+  // height is in mm, scale=3 for high res, includetext=true to see text below
+  const barcodeUrl = `https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(barcodeText)}&scale=3&rotate=N&height=15&includetext&textsize=8&textyoffset=2`;
+  
+  return `
+    <div style="width: 4in; height: 1.5in; box-sizing: border-box; display: flex; flex-direction: column; padding: 0.08in 0.15in; font-family: 'Helvetica', Arial, sans-serif; color: #000; background: #fff; overflow: hidden; border: 1px solid #ddd;">
+      <!-- Top Info Row -->
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10pt; border-bottom: 2pt solid #000; padding-bottom: 3pt; margin-bottom: 5pt;">
+        <span style="font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(tray.projectName)}</span>
+        <span style="display: flex; gap: 8px;">
+          <span style="border: 1.5pt solid #000; padding: 1pt 8pt; font-size: 9pt; font-weight: 900;">${escapeHtml(tray.brand.toUpperCase())}</span>
+          <span style="background: #000; color: #fff; padding: 1pt 8pt; font-size: 9pt; font-weight: 900;">${escapeHtml(tray.generation)}</span>
+        </span>
+      </div>
+      
+      <!-- Middle Content Area -->
+      <div style="display: flex; flex: 1; align-items: flex-start; gap: 0.2in;">
+        <div style="display: flex; flex-direction: column; align-items: center; min-width: 0.9in;">
+          <div style="font-size: 44pt; font-weight: 900; line-height: 0.8; letter-spacing: -2pt;">#${tray.trayNum}</div>
+          <div style="font-size: 7pt; font-weight: 800; text-transform: uppercase; margin-top: 4pt;">TRAY NUMBER</div>
+        </div>
+        
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-family: 'Courier New', monospace; font-size: 14pt; font-weight: 900; word-break: break-all; line-height: 1.1; margin-bottom: 2pt;">${escapeHtml(tray.partNumber)}</div>
+          <div style="font-size: 8pt; color: #000; font-weight: 600;">CAP: ${tray.capacity} · ${date}</div>
+          <div style="margin-top: 4pt; font-size: 10pt; font-weight: 900; border: 1.5pt solid #000; padding: 2pt 8pt; display: inline-block;">QTY: ________</div>
+        </div>
+      </div>
+
+      <!-- Bottom Barcode Spread -->
+      <div style="margin-top: auto; padding-top: 4pt; display: flex; flex-direction: column; align-items: center;">
+        <img src="${barcodeUrl}" style="width: 3.5in; height: 0.5in; object-fit: fill; image-rendering: pixelated; display: block;" alt="Barcode" />
+      </div>
+    </div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ════════════════════════════════════════════════════════════════════════ */
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+function showModal(html) {
+  document.getElementById("modal-content").innerHTML = html;
+  document.getElementById("modal").classList.add("show");
+}
+function hideModal() {
+  document.getElementById("modal").classList.remove("show");
+}
+function showToast(msg, color) {
+  const c = document.getElementById("toast-container");
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.style.color = color;
+  t.style.border = `2px solid ${color}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════════════════════════════════════ */
+render(); // Show loading screen immediately
+initSupabaseState(); // Then fetch from Supabase in background
 function setGlobalSearch(val) {
   globalSearchQuery = val;
   // Re-render the specific content page without re-rendering the whole shell so we don't lose focus
@@ -1255,1430 +2670,13 @@ function closeEnginePopup() {
 async function setEngine(e) { 
   state.engine = e; 
   await dbSave('settings', 'upsert', { key: 'engine', value: e });
-  toggleEnginePopup({stopPropagation:()=>{}}); 
+  closeEnginePopup(); 
   render(); 
 }
 async function saveGeminiKey(v) { 
   state.geminiKey = v; 
   await dbSave('settings', 'upsert', { key: 'geminiKey', value: v });
 }
-
-/* ════════════════════════════════════════════════════════════════════════
-   SCANNER PAGE
-   ════════════════════════════════════════════════════════════════════════ */
-let scanMode = "single"; // "single", "dual", or "bulk"
-
-function renderScanner() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectScans = state.scans.filter(s => s.projectId === project.id);
-  
-  document.getElementById("page-content").innerHTML = `
-    <div style="display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 24px;">
-      <div>
-        <h1 class="h">Scan</h1>
-        <div class="card">
-          <div style="display: flex; gap: 0; margin-bottom: 14px; border-radius: 8px; overflow: hidden; border: 1px solid #2a2a35;">
-            <button onclick="setScanMode('single')" style="flex:1; padding: 8px 12px; border: none; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
-              background: ${scanMode === 'single' ? '#FFD700' : '#15151c'}; color: ${scanMode === 'single' ? '#0a0a0f' : '#888'};">SINGLE</button>
-            <button onclick="setScanMode('dual')" style="flex:1; padding: 8px 12px; border: none; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
-              background: ${scanMode === 'dual' ? '#4fa3ff' : '#15151c'}; color: ${scanMode === 'dual' ? '#0a0a0f' : '#888'};">DUAL (P/N+S/N)</button>
-            <button onclick="setScanMode('bulk')" style="flex:1; padding: 8px 12px; border: none; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
-              background: ${scanMode === 'bulk' ? '#3ed685' : '#15151c'}; color: ${scanMode === 'bulk' ? '#0a0a0f' : '#888'};">BULK</button>
-          </div>
-          
-          ${scanMode === 'single' ? `
-            <div class="label">QR / Barcode input</div>
-            <textarea id="scan-input" placeholder="Paste or type scan data here…&#10;e.g.  (P)HMA41GR7MFR4N-TF (S)SN938475 (L)16GB DDR4"></textarea>
-          ` : scanMode === 'dual' ? `
-            <div class="label" style="color: #4fa3ff;">① Part Number Scan</div>
-            <textarea id="scan-input" rows="2" placeholder="Scan the Part Number barcode here…" style="margin-bottom: 12px;"></textarea>
-            <div class="label" style="color: #3ed685;">② Serial Number Scan</div>
-            <textarea id="serial-input" rows="2" placeholder="Scan the Serial Number barcode here…"></textarea>
-          ` : `
-            <div class="label" style="color: #3ed685;">Paste multiple scans (one per line)</div>
-            <textarea id="scan-input" rows="6" placeholder="Paste multiple part numbers here, one per line…&#10;e.g.&#10;HMA41GR7MFR4N-TF&#10;M393B2G70QH0-YK0&#10;KVR24N17S8/8"></textarea>
-          `}
-          
-          <div class="flex gap-12" style="margin-top: 14px; flex-wrap: wrap; align-items: center;">
-            <button class="btn" id="scan-btn" onclick="${scanMode === 'bulk' ? 'doBulkScan()' : 'doScan()'}">${scanMode === 'dual' ? 'Combine & Scan ▶' : scanMode === 'bulk' ? 'Scan All ▶' : 'Scan ▶'}</button>
-            <button class="btn-ghost" onclick="clearScanInputs()">Clear</button>
-            <label class="flex items-center gap-8" style="font-size: 11px; color: #888; margin-left: auto; cursor: pointer;">
-              <input type="checkbox" id="autoprint-toggle" ${project.autoprint ? "checked" : ""} 
-                onchange="toggleAutoprint(this.checked)" style="width: auto;" />
-              auto-print labels
-            </label>
-          </div>
-          <div style="font-size: 10px; color: #666; margin-top: 10px; letter-spacing: 0.5px;">
-            ⌘/Ctrl + Enter to scan · Engine: ${state.engine.toUpperCase()} · Default cap: ${project.defaultCap}
-          </div>
-        </div>
-        <div id="result-card-container"></div>
-        
-        <div class="card" style="margin-top: 24px; padding: 16px;">
-          <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Import CSV File</div>
-          <div style="font-size: 11px; color: #888; margin-bottom: 12px; line-height: 1.5;">
-            Upload an Excel-exported CSV to bulk import scans into this project. Your CSV must have headers (e.g. "Part Number", "Tray", "Brand").
-          </div>
-          <div class="flex items-center gap-12">
-            <input type="file" id="csv-upload" accept=".csv" style="font-size: 11px; color: #fff; width: 100%; max-width: 250px;" />
-            <button class="btn" style="padding: 6px 14px; font-size: 11px;" onclick="handleCSVImport()">Import</button>
-          </div>
-        </div>
-        
-      </div>
-      
-      <div>
-        <h1 class="h">Recent · ${projectScans.reduce((sum, s) => sum + (s.quantity || 1), 0)} sticks</h1>
-        <div class="card" style="padding: 0; overflow: hidden; max-height: calc(100vh - 220px); overflow-y: auto;">
-          ${projectScans.length === 0 ? `
-            <div class="empty" style="padding: 32px;">
-              <div style="font-size: 14px;">No scans yet</div>
-              <div style="font-size: 12px; color: #666; margin-top: 4px;">Scan a stick to begin</div>
-            </div>
-          ` : projectScans.slice(0, 25).map(s => {
-            const u = state.users.find(u => u.id === s.userId);
-            const tray = state.trays.find(t => t.id === s.trayId);
-            return `
-              <div style="padding: 12px 16px; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 10px;">
-                <div class="avatar avatar-sm" style="background: ${u?.color || '#555'};">${u?.name.charAt(0).toUpperCase() || '?'}</div>
-                <div style="flex: 1; min-width: 0;">
-                  <div class="mono truncate" style="font-size: 12px; color: #fff;">${escapeHtml(s.result.partNumber || s.scan.slice(0, 30))}</div>
-                  <div style="font-size: 10px; color: #888; margin-top: 2px;">
-                    Tray #${tray?.trayNum} · ${timeAgo(s.ts)}
-                    ${tray && state.users.find(u2 => u2.id === tray.ownerUserId) ? ` · <span style="color: ${state.users.find(u2 => u2.id === tray.ownerUserId).color}; opacity: 0.8;">${state.users.find(u2 => u2.id === tray.ownerUserId).name}</span>` : ""}
-                  </div>
-                  ${s.result.serial ? `<div class="mono" style="font-size: 10px; color: #3ed685; margin-top: 1px;">S/N: ${escapeHtml(s.result.serial)}</div>` : ''}
-                </div>
-                <span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    </div>
-  `;
-  
-  // Wire up keyboard shortcut
-  // Auto-focus: in dual mode focus serial if part is filled
-  if (scanMode === 'dual') {
-    const si = document.getElementById('serial-input');
-    if (si) si.focus();
-  } else {
-    const ti = document.getElementById('scan-input');
-    if (ti) ti.focus();
-  }
-  const ti = document.getElementById("scan-input");
-  if (ti) ti.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey && scanMode !== 'bulk') {
-      e.preventDefault();
-      if (scanMode === 'dual') {
-        const si2 = document.getElementById('serial-input');
-        if (si2 && !si2.value.trim() && document.activeElement === ti) { si2.focus(); return; }
-      }
-      doScan();
-    }
-  });
-  const si = document.getElementById("serial-input");
-  if (si) si.addEventListener("keydown", e => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doScan(); }
-  });
-
-  // Persist the last result card if it exists (prevents wipeout during background refreshes)
-  if (session.lastScan && session.lastAssignment) {
-    renderResultCard(session.lastScan, session.lastAssignment);
-  }
-}
-
-function setScanMode(mode) { scanMode = mode; renderScanner(); }
-function clearScanInputs() {
-  const si = document.getElementById("scan-input");
-  const sr = document.getElementById("serial-input");
-  if (si) si.value = '';
-  if (sr) sr.value = '';
-}
-
-async function doBulkScan() {
-  const input = document.getElementById("scan-input");
-  const btn = document.getElementById("scan-btn");
-  const lines = input.value.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length === 0) { showToast('Paste scan data (one per line)', '#ff6b8a'); return; }
-  
-  btn.textContent = `Processing 0/${lines.length}...`;
-  btn.disabled = true;
-  window.isBulkScanning = true;
-  let success = 0;
-  for (let i = 0; i < lines.length; i++) {
-    btn.textContent = `Processing ${i+1}/${lines.length}...`;
-    const scan = lines[i];
-    const result = await classify(scan);
-    if (!result || !result.partNumber) continue;
-    
-    let assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
-    if (!assignment) continue;
-    
-    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
-    const newScan = {
-      id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-      ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
-    };
-    if (assignment.isNew) {
-      const newTrayData = { ...assignment.tray, sticks: [scanId] };
-      state.trays.push(newTrayData);
-      state.trayCounters[session.currentProjectId] = assignment.newNum;
-      await dbSave('trays', 'insert', newTrayData);
-    } else {
-      const tray = state.trays.find(t => t.id === assignment.tray.id);
-      tray.sticks.push(scanId);
-      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-    }
-    state.scans.unshift(newScan);
-    await dbSave('scans', 'insert', newScan);
-    
-    // Save for persistence
-    session.lastScan = newScan;
-    session.lastAssignment = assignment;
-    
-    success++;
-    
-    // Add a 50ms delay between processing each stick to absolutely guarantee no overlap
-    await new Promise(r => setTimeout(r, 50));
-  }
-  
-  window.isBulkScanning = false;
-  btn.textContent = 'Scan All \u25b6';
-  btn.disabled = false;
-  input.value = '';
-  showToast(`\u2713 Bulk scan: ${success}/${lines.length} processed`, '#3ed685');
-  renderScanner();
-}
-
-function loadSample() {
-  document.getElementById("scan-input").value = SAMPLE_SCANS[Math.floor(Math.random() * SAMPLE_SCANS.length)];
-}
-
-async function toggleAutoprint(checked) {
-  const p = state.projects.find(p => p.id === session.currentProjectId);
-  if (p) { 
-    p.autoprint = checked; 
-    await dbSave('projects', 'update', { updates: { autoprint: checked }, id: p.id }, 'id');
-  }
-}
-
-async function doScan() {
-  const input = document.getElementById("scan-input");
-  const btn = document.getElementById("scan-btn");
-  let scan = input.value.trim();
-  
-  // In dual mode, combine part number + serial into a tagged string
-  if (scanMode === 'dual') {
-    const serialInput = document.getElementById("serial-input");
-    const partScan = scan;
-    const serialScan = serialInput ? serialInput.value.trim() : '';
-    if (!partScan) { showToast("Enter the Part Number scan", "#ff6b8a"); return; }
-    // Build a combined tagged string
-    scan = `(P)${partScan}`;
-    if (serialScan) scan += ` (S)${serialScan}`;
-  }
-  
-  if (!scan) return;
-  
-  btn.textContent = "Analyzing…";
-  btn.disabled = true;
-  
-  const result = await classify(scan);
-  if (!result) {
-    showToast("Classification failed", "#ff6b8a");
-    btn.textContent = "Scan ▶"; btn.disabled = false;
-    return;
-  }
-  const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
-  if (!assignment) {
-    showToast("No part number — cannot assign tray", "#ff6b8a");
-    btn.textContent = "Scan ▶"; btn.disabled = false;
-    return;
-  }
-  
-  const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}`;
-  const newScan = {
-    id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-    ts: Date.now(), scan, result, trayId: assignment.tray.id,
-  };
-  
-  if (assignment.isNew) {
-    state.trays.push({ ...assignment.tray, sticks: [scanId] });
-    state.trayCounters[session.currentProjectId] = assignment.newNum;
-    await dbSave('trays', 'insert', { ...assignment.tray, sticks: [scanId] });
-  } else {
-    const tray = state.trays.find(t => t.id === assignment.tray.id);
-    tray.sticks.push(scanId);
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  }
-  state.scans.unshift(newScan);
-  await dbSave('scans', 'insert', newScan);
-  
-  input.value = "";
-  btn.textContent = "Scan ▶"; btn.disabled = false;
-  
-  const trayN = assignment.tray.trayNum || assignment.newNum;
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  
-  // Save to session for persistence during re-renders
-  session.lastScan = newScan;
-  session.lastAssignment = assignment;
-  
-  // Render result card
-  renderResultCard(newScan, assignment);
-  
-  // Show toast
-  if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
-  else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
-  else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
-  
-  // Auto-print if enabled and new tray
-  if (assignment.isNew && project.autoprint) {
-    setTimeout(() => {
-      const tray = state.trays.find(t => t.id === assignment.tray.id);
-      printTrayLabel(tray);
-    }, 400);
-  }
-  
-  // Refresh recent list
-  renderScanner();
-}
-
-function renderResultCard(scan, assignment) {
-  const r = scan.result;
-  const tray = state.trays.find(t => t.id === scan.trayId);
-  const owner = tray ? state.users.find(u => u.id === tray.ownerUserId) : null;
-  const brandMeta = BRAND_META[r.brand] || BRAND_META.Unknown;
-  const genMeta = GEN_META[r.generation] || GEN_META.Unknown;
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  
-  document.getElementById("result-card-container").innerHTML = `
-    <div style="margin-top: 20px; background: #1a1a22; border-radius: 14px; overflow: hidden; border-left: 4px solid ${brandMeta.hex};">
-      <div style="padding: 20px;">
-        <div class="flex items-center justify-between" style="margin-bottom: 16px;">
-          <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;">Last result</div>
-          <span class="pill" style="background: #1f1d10; color: #FFD700;">${(r.method || "rule").toUpperCase()}</span>
-        </div>
-        <div class="mono" style="font-size: 22px; font-weight: 800; color: #FFD700; margin-bottom: 14px; word-break: break-all;">
-          ${escapeHtml(r.partNumber || "(no part)")}
-        </div>
-        <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 16px;">
-          <span class="pill pill-large" style="background: ${brandMeta.hex};">${escapeHtml(r.brand)}</span>
-          <span class="pill pill-large" style="background: ${genMeta.bg}; color: ${genMeta.fg};">${escapeHtml(r.generation)}</span>
-          <span class="pill pill-large" style="background: #0a2818; color: #3ed685;">CONF ${Math.round((r.confidence || 0) * 100)}%</span>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
-          <div>
-            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px;">Serial</div>
-            <div class="mono" style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.serial || "\u2014")}</div>
-          </div>
-          <div>
-            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px;">Label</div>
-            <div style="color: #e8e8ee; word-break: break-all;">${escapeHtml(r.label || "\u2014")}</div>
-          </div>
-        </div>
-      </div>
-      <div style="background: #15151c; padding: 14px 20px; border-top: 1px solid #2a2a35; display: flex; align-items: center; justify-content: space-between;">
-        <div>
-          <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;">Tray assignment</div>
-          <div style="font-size: 18px; font-weight: 800; color: #3ed685; margin-top: 2px;">
-            #${tray?.trayNum}
-            <span style="font-size: 12px; color: #888; margin-left: 8px; font-weight: 500;">${tray?.sticks.length}/${tray?.capacity} sticks</span>
-          </div>
-        </div>
-        <div class="flex gap-8">
-          <button class="btn-ghost" style="font-size: 11px; padding: 6px 10px;" onclick="printTrayLabelById('${tray?.id}')">🖨 Print label</button>
-          ${project.mode === "separate" && owner ? `<div style="font-size: 11px; color: #888; align-self: center;">owner: <span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span></div>` : ""}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   TRAYS PAGE
-   ════════════════════════════════════════════════════════════════════════ */
-let trayFilter = "all";
-let expandedTrays = new Set();
-function toggleTrayExpand(trayId) {
-  if (expandedTrays.has(trayId)) expandedTrays.delete(trayId);
-  else expandedTrays.add(trayId);
-  renderTraysPage();
-}
-function renderTraysPage() {
-  const q = globalSearchQuery.toLowerCase().trim();
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectTrays = state.trays.filter(t => t.projectId === project.id);
-  const visible = projectTrays.filter(t => {
-    if (trayFilter === "mine" && project.mode === "separate" && t.ownerUserId !== session.currentUser.id) return false;
-    if (trayFilter === "full" && t.sticks.length < t.capacity) return false;
-    if (trayFilter === "active" && t.sticks.length >= t.capacity) return false;
-    if (q) {
-      if (!t.partNumber.toLowerCase().includes(q) && t.trayNum.toString() !== q) return false;
-    }
-    return true;
-  }).sort((a, b) => a.trayNum - b.trayNum);
-  const filterBtns = [
-    { id: "all", label: "All" },
-    ...(project.mode === "separate" ? [{ id: "mine", label: "Mine" }] : []),
-    { id: "active", label: "Active" },
-    { id: "full", label: "Full" },
-  ];
-  document.getElementById("page-content").innerHTML = `
-    <div class="flex items-center justify-between" style="margin-bottom: 16px;">
-      <h1 class="h" style="margin-bottom: 0;">Trays \u00b7 ${projectTrays.length}</h1>
-      <div class="flex gap-8">
-        ${filterBtns.map(f => `<button onclick="setTrayFilter('${f.id}')" style="background: ${trayFilter === f.id ? '#FFD700' : '#1a1a22'}; color: ${trayFilter === f.id ? '#1a1a2e' : '#888'}; border: 0; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700;">${f.label}</button>`).join("")}
-      </div>
-    </div>
-    ${visible.length === 0 ? `<div class="empty">No trays match this filter</div>` : `
-      <div class="tray-grid">
-        ${visible.map(t => {
-          const owner = state.users.find(u => u.id === t.ownerUserId);
-          const creator = state.users.find(u => u.id === t.createdBy);
-          const pct = (t.sticks.length / t.capacity) * 100;
-          const isFull = t.sticks.length >= t.capacity;
-          const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
-          const barColor = isFull ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
-          const isExp = expandedTrays.has(t.id);
-          const tScans = isExp ? state.scans.filter(s => t.sticks.includes(s.id)).sort((a,b) => a.ts - b.ts) : [];
-          return `<div class="tray-card" style="border-left: 3px solid ${isFull ? '#ff6b8a' : bm.hex};">
-            <div class="flex justify-between items-center" style="margin-bottom: 10px;">
-              <div style="font-size: 22px; font-weight: 800; color: #FFD700;">#${t.trayNum}</div>
-              <span class="badge ${isFull ? 'badge-full' : 'badge-active'}">${isFull ? 'FULL' : 'ACTIVE'}</span>
-            </div>
-            <div class="mono" style="font-size: 13px; font-weight: 600; color: #fff; word-break: break-all; margin-bottom: 6px;">${escapeHtml(t.partNumber)}</div>
-            <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 10px;">
-              <span class="pill" style="background: ${bm.hex};">${escapeHtml(t.brand)}</span>
-              <span class="pill" style="background: ${GEN_META[t.generation]?.bg || '#1a1a22'}; color: ${GEN_META[t.generation]?.fg || '#888'};">${escapeHtml(t.generation)}</span>
-            </div>
-            <div class="tray-progress" style="margin-bottom: 6px;"><div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div></div>
-            <div class="flex justify-between" style="font-size: 11px; color: #888;">
-              <span><b style="color: #fff;">${t.sticks.length}</b> / ${t.capacity}</span>
-              ${project.mode === "separate" && owner ? `<span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span>` : creator ? `<span style="color: #888;">by <span style="color: ${creator.color};">${escapeHtml(creator.name)}</span></span>` : ""}
-            </div>
-            <div class="flex gap-8" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #2a2a35;">
-              <button class="btn-ghost" style="flex:1; font-size: 11px; padding: 6px;" onclick="openCapEditModal('${t.id}')">edit</button>
-              <button class="btn-ghost" style="flex:1; font-size: 11px; padding: 6px;" onclick="printTrayLabelById('${t.id}')">\ud83d\udda8</button>
-              <button class="btn-ghost" style="flex:1; font-size: 11px; padding: 6px; color: #ff6b8a;" onclick="confirmDeleteTray('${t.id}')">delete</button>
-              <button class="btn-ghost" style="flex:1; font-size: 11px; padding: 6px;" onclick="toggleTrayExpand('${t.id}')">${isExp ? '\u25be hide' : '\u25b8 view'} (${t.sticks.length})</button>
-            </div>
-            ${isExp ? `<div style="margin-top: 10px; max-height: 240px; overflow-y: auto; border: 1px solid #2a2a35; border-radius: 6px; background: #15151c;">
-              ${t.sticks.length === 0 ? '<div style="padding: 14px; color: #666; text-align: center; font-size: 12px;">no sticks yet</div>' : t.sticks.map((scanId, i) => {
-                const s = state.scans.find(scan => scan.id === scanId);
-                if (!s) return '';
-                const u = state.users.find(u => u.id === s.userId);
-                return `<div style="padding: 5px 10px; border-bottom: 1px solid #1a1a22; display: flex; align-items: center; gap: 8px; font-size: 11px;">
-                  <span style="color: #666; min-width: 16px;">${i+1}</span>
-                  <span style="color: #888; min-width: 42px;">${new Date(s.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
-                  <span class="mono truncate" style="flex: 1; color: #3ed685;">${escapeHtml(s.result?.serial || '-')}</span>
-                  <div class="avatar" style="width: 18px; height: 18px; font-size: 9px; background: ${u?.color || '#555'};">${u?.name?.charAt(0) || '?'}</div>
-                  <span class="truncate" style="color: ${u?.color || '#888'}; width: 50px;">${escapeHtml(u?.name || '?')}</span>
-                  <div class="flex gap-4">
-                    <button class="btn-ghost" style="padding: 2px 4px; font-size: 9px;" onclick="editStick('${t.id}', ${i})">edit</button>
-                    <button class="btn-ghost" style="padding: 2px 4px; font-size: 9px;" onclick="moveStick('${t.id}', ${i})">move</button>
-                    <button class="btn-ghost" style="padding: 2px 4px; font-size: 9px; color: #ff6b8a; border-color: #ff6b8a;" onclick="removeStickFromTray('${t.id}', ${i})">X</button>
-                  </div>
-                </div>`;
-              }).join('')}
-            </div>` : ''}
-          </div>`;
-        }).join("")}
-      </div>
-    `}
-  `;
-}
-
-async function removeStickFromTray(trayId, stickIndex) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray || !tray.sticks[stickIndex]) return;
-  tray.sticks.splice(stickIndex, 1);
-  await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  renderTraysPage();
-}
-
-async function editStick(trayId, stickIndex) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray || !tray.sticks[stickIndex]) return;
-  const scanId = tray.sticks[stickIndex];
-  const scan = state.scans.find(s => s.id === scanId);
-  if (!scan) return;
-  const newPart = prompt(`Edit Part Number:`, scan.result?.partNumber || "");
-  if (newPart !== null && newPart.trim() !== "") {
-    const p = newPart.trim().toUpperCase();
-    if (p === (scan.result?.partNumber || "").toUpperCase()) return; // No change
-    
-    // Update scan part number
-    scan.result.partNumber = p;
-    await dbSave('scans', 'update', { updates: { result: scan.result }, id: scan.id }, 'id');
-    
-    // Automatically reassign
-    const assignment = assignTray(session.currentProjectId, session.currentUser.id, scan.result);
-    if (!assignment) {
-      renderTraysPage();
-      return;
-    }
-    
-    // Remove from old tray
-    tray.sticks.splice(stickIndex, 1);
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-    
-    // Add to new tray
-    if (assignment.isNew) {
-      const newTray = { ...assignment.tray, sticks: [scanId] };
-      state.trays.push(newTray);
-      state.trayCounters[session.currentProjectId] = assignment.newNum;
-      await dbSave('trays', 'insert', newTray);
-    } else {
-      const targetTray = state.trays.find(t => t.id === assignment.tray.id);
-      targetTray.sticks.push(scanId);
-      await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
-    }
-    
-    // Update scan's tray ID
-    scan.trayId = assignment.tray.id;
-    await dbSave('scans', 'update', { updates: { trayId: assignment.tray.id }, id: scan.id }, 'id');
-    
-    showToast(`Stick moved to Tray #${assignment.tray.trayNum || assignment.newNum}`, '#3ed685');
-    renderTraysPage();
-  }
-}
-
-async function moveStick(trayId, stickIndex) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray || !tray.sticks[stickIndex]) return;
-  const scan = state.scans.find(s => s.id === tray.sticks[stickIndex]);
-  if (!scan) return;
-
-  const newTrayNumStr = prompt(`Move stick (${scan.result?.partNumber}) to which Tray Number?`);
-  if (!newTrayNumStr) return;
-  const newTrayNum = parseInt(newTrayNumStr, 10);
-  if (isNaN(newTrayNum)) return alert("Invalid tray number");
-  if (newTrayNum === tray.trayNum) return;
-
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  let targetTray = state.trays.find(t => t.projectId === project.id && t.trayNum === newTrayNum);
-  
-  if (targetTray) {
-    if (targetTray.partNumber.toUpperCase() !== scan.result.partNumber.toUpperCase()) {
-      if (!confirm(`Warning: Target Tray #${newTrayNum} holds a different part number (${targetTray.partNumber}). Move anyway?`)) return;
-    }
-    if (targetTray.sticks.length >= targetTray.capacity) {
-      if (!confirm(`Warning: Target Tray #${newTrayNum} is full. Move anyway?`)) return;
-    }
-  } else {
-    targetTray = {
-      id: `t_${project.id}_${newTrayNum}_${Date.now()}`,
-      projectId: project.id, ownerUserId: session.currentUser.id,
-      partNumber: scan.result.partNumber, label: scan.result.label || "", brand: scan.result.brand || "Unknown", generation: scan.result.generation || "Unknown",
-      trayNum: newTrayNum, capacity: project.defaultCap, sticks: [],
-      createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
-    };
-    state.trays.push(targetTray);
-    await dbSave('trays', 'insert', targetTray);
-  }
-
-  tray.sticks.splice(stickIndex, 1);
-  await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  targetTray.sticks.push(scan.id);
-  await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
-  scan.trayId = targetTray.id;
-  await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
-  
-  renderTraysPage();
-}
-
-function setTrayFilter(f) { trayFilter = f; renderTraysPage(); }
-
-
-function viewTrayContents(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  const trayScans = state.scans.filter(s => tray.sticks.includes(s.id));
-  const brandMeta = BRAND_META[tray.brand] || BRAND_META.Unknown;
-  showModal(`
-    <h2 class="h2" style="color: #FFD700; margin-bottom: 4px;">Tray #${tray.trayNum} Contents</h2>
-    <div class="flex gap-8" style="margin-bottom: 14px; flex-wrap: wrap;">
-      <span class="pill" style="background: ${brandMeta.hex};">${escapeHtml(tray.brand)}</span>
-      <span class="pill" style="background: ${GEN_META[tray.generation]?.bg || '#1a1a22'}; color: ${GEN_META[tray.generation]?.fg || '#888'};">${escapeHtml(tray.generation)}</span>
-      <span style="font-size: 12px; color: #888;">${tray.sticks.length} / ${tray.capacity} sticks</span>
-    </div>
-    <div class="mono" style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 14px; word-break: break-all;">${escapeHtml(tray.partNumber)}</div>
-    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #2a2a35; border-radius: 8px;">
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <thead>
-          <tr style="background: #15151c; position: sticky; top: 0;">
-            <th style="padding: 8px 10px; text-align: left; color: #888; font-weight: 600;">#</th>
-            <th style="padding: 8px 10px; text-align: left; color: #888; font-weight: 600;">Part Number</th>
-            <th style="padding: 8px 10px; text-align: left; color: #888; font-weight: 600;">Serial</th>
-            <th style="padding: 8px 10px; text-align: left; color: #888; font-weight: 600;">Scanned By</th>
-            <th style="padding: 8px 10px; text-align: left; color: #888; font-weight: 600;">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tray.sticks.length === 0 ? `<tr><td colspan="6" style="padding: 16px; color: #666; text-align: center;">No scan records found</td></tr>` : 
-            tray.sticks.map((scanId, i) => {
-              const s = state.scans.find(scan => scan.id === scanId);
-              if (!s) return '';
-              const u = state.users.find(u => u.id === s.userId);
-              return `
-                <tr style="border-top: 1px solid #1a1a22;">
-                  <td style="padding: 6px 10px; color: #666;">${i + 1}</td>
-                  <td class="mono" style="padding: 6px 10px; color: #fff;">${escapeHtml(s.result?.partNumber || '-')}</td>
-                  <td class="mono" style="padding: 6px 10px; color: #3ed685;">${escapeHtml(s.result?.serial || '-')}</td>
-                  <td style="padding: 6px 10px; color: ${u?.color || '#888'};">${escapeHtml(u?.name || '?')}</td>
-                  <td style="padding: 6px 10px; color: #888;">${timeAgo(s.ts)}</td>
-                  <td style="padding: 6px 10px; text-align: right;">
-                    <button class="btn-ghost" style="padding: 2px 6px; font-size: 10px;" onclick="editStick('${tray.id}', ${i})">edit</button>
-                    <button class="btn-ghost" style="padding: 2px 6px; font-size: 10px;" onclick="moveStick('${tray.id}', ${i})">move</button>
-                    <button class="btn-ghost" style="padding: 2px 6px; font-size: 10px; color: #ff6b8a; border-color: #ff6b8a;" onclick="removeStickFromTray('${tray.id}', ${i})">delete</button>
-                  </td>
-                </tr>`;
-            }).join('')}
-        </tbody>
-      </table>
-    </div>
-    <div class="flex gap-8" style="justify-content: flex-end; margin-top: 14px;">
-      <button class="btn-ghost" onclick="hideModal()">Close</button>
-      <button class="btn-ghost" onclick="event.stopPropagation(); printTrayLabelById('${tray.id}')">🖨 Print label</button>
-    </div>
-  `);
-}
-
-function openCapEditModal(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  showModal(`
-    <h2 class="h2" style="color: #FFD700; margin-bottom: 12px;">Edit capacity · tray #${tray.trayNum}</h2>
-    <div class="mono" style="font-size: 12px; color: #888; margin-bottom: 14px;">${escapeHtml(tray.partNumber)}</div>
-    <div class="field">
-      <div class="label">New capacity (sticks per tray)</div>
-      <input type="number" id="cap-input" value="${tray.capacity}" min="${tray.sticks.length}" max="500" />
-    </div>
-    <div class="flex gap-8" style="margin-bottom: 8px;">
-      ${[25, 35, 50, 100].map(n => `<button class="btn-ghost" style="font-size: 11px; padding: 4px 10px;" onclick="document.getElementById('cap-input').value=${n}">${n}</button>`).join("")}
-    </div>
-    <div id="cap-warn" style="font-size: 11px; color: #888; margin-bottom: 12px;">tray currently holds ${tray.sticks.length} sticks</div>
-    <div class="flex gap-8" style="justify-content: flex-end;">
-      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
-      <button class="btn" onclick="saveCapEdit('${tray.id}')">Save</button>
-    </div>
-  `);
-  
-  document.getElementById("cap-input").addEventListener("input", e => {
-    const v = parseInt(e.target.value) || 0;
-    const warn = document.getElementById("cap-warn");
-    if (v < tray.sticks.length) {
-      warn.style.color = "#ff6b8a";
-      warn.textContent = `⚠ cannot be less than current sticks (${tray.sticks.length})`;
-    } else {
-      warn.style.color = "#888";
-      warn.textContent = `tray currently holds ${tray.sticks.length} sticks`;
-    }
-  });
-}
-
-async function saveCapEdit(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  const v = parseInt(document.getElementById("cap-input").value) || 0;
-  if (v < tray.sticks.length) return;
-  tray.capacity = v;
-  await dbSave('trays', 'update', { updates: { capacity: v }, id: tray.id }, 'id');
-  hideModal();
-  renderTraysPage();
-}
-
-function confirmDeleteTray(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  showModal(`
-    <h2 class="h2" style="color: #ff6b8a; margin-bottom: 12px;">Delete Tray #${tray.trayNum}?</h2>
-    <div class="mono" style="font-size: 12px; color: #888; margin-bottom: 8px;">${escapeHtml(tray.partNumber)}</div>
-    <div style="font-size: 13px; color: #e8e8ee; margin-bottom: 16px; line-height: 1.6;">
-      This will permanently remove <b style="color: #ff6b8a;">${tray.sticks.length} scan(s)</b> from this tray.<br>
-      Tray numbers of other trays will <b>not</b> change.
-    </div>
-    <div class="flex gap-8" style="justify-content: flex-end;">
-      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
-      <button class="btn" style="background: #ff6b8a; color: #fff;" onclick="deleteTray('${tray.id}')">Delete tray</button>
-    </div>
-  `);
-}
-
-async function deleteTray(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  // Remove associated scans
-  const removedScanIds = new Set(tray.sticks);
-  state.scans = state.scans.filter(s => !removedScanIds.has(s.id));
-  // Remove the tray (do NOT renumber other trays)
-  state.trays = state.trays.filter(t => t.id !== trayId);
-  // Persist
-  if (useSupabase && sb) {
-    try {
-      await sb.from('scans').delete().in('id', [...removedScanIds]);
-      await sb.from('trays').delete().eq('id', trayId);
-    } catch (err) { console.warn('Delete tray DB error:', err); }
-  }
-  saveLocalState();
-  hideModal();
-  showToast(`Tray #${tray.trayNum} deleted`, '#ff6b8a');
-  renderTraysPage();
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   HISTORY PAGE
-   ════════════════════════════════════════════════════════════════════════ */
-let historyFilter = "all";
-function renderHistoryPage() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectScans = state.scans.filter(s => s.projectId === project.id);
-  const q = globalSearchQuery.toLowerCase().trim();
-  const filtered = (historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId === historyFilter)).filter(s => {
-    if (!q) return true;
-    const trayNum = state.trays.find(t => t.id === s.trayId)?.trayNum?.toString() || "";
-    return (s.result?.partNumber || "").toLowerCase().includes(q) || trayNum === q;
-  });
-  
-  document.getElementById("page-content").innerHTML = `
-    <div class="flex items-center justify-between" style="margin-bottom: 16px;">
-      <h1 class="h" style="margin-bottom: 0;">History · ${filtered.reduce((sum, s) => sum + (s.quantity || 1), 0)} sticks</h1>
-      <div class="flex gap-8">
-        <button class="btn-ghost" style="font-size: 11px; padding: 6px 14px;" onclick="exportCSV()">📥 Export CSV</button>
-        <select onchange="setHistoryFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 8px 12px; border-radius: 8px; font-size: 12px; width: auto;">
-          <option value="all">All members</option>
-          ${state.users.filter(u => project.memberIds.includes(u.id)).map(u => 
-            `<option value="${u.id}" ${historyFilter === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`
-          ).join("")}
-        </select>
-      </div>
-    </div>
-    
-    ${filtered.length === 0 ? `
-      <div class="empty">No scans yet</div>
-    ` : `
-      <div class="card" style="padding: 0; overflow: hidden; overflow-x: auto;">
-        <div class="history-row history-head" style="grid-template-columns: 0.8fr 1.5fr 1fr 0.6fr 0.6fr 0.5fr 0.7fr 0.5fr;">
-          <div>When</div><div>Part</div><div>Serial</div><div>Brand</div><div>Gen</div><div>Tray</div><div>By</div><div>Method</div>
-        </div>
-        ${filtered.slice(0, 200).map(s => {
-          const u = state.users.find(u => u.id === s.userId);
-          const tray = state.trays.find(t => t.id === s.trayId);
-          return `
-            <div class="history-row" style="grid-template-columns: 0.8fr 1.5fr 1fr 0.6fr 0.6fr 0.5fr 0.7fr 0.5fr;">
-              <div style="color: #888;">${timeAgo(s.ts)}</div>
-              <div class="mono truncate" style="color: #fff;">${escapeHtml(s.result.partNumber)}</div>
-              <div class="mono truncate" style="color: #3ed685;">${escapeHtml(s.result.serial || '-')}</div>
-              <div><span class="pill" style="background: ${BRAND_META[s.result.brand]?.hex || '#555'};">${s.result.brand}</span></div>
-              <div><span class="pill" style="background: ${GEN_META[s.result.generation]?.bg}; color: ${GEN_META[s.result.generation]?.fg};">${s.result.generation}</span></div>
-              <div style="color: #FFD700; font-weight: 700;">#${tray?.trayNum}</div>
-              <div style="color: ${u?.color}; font-weight: 600;">${escapeHtml(u?.name || '?')}</div>
-              <div><span class="pill" style="background: #1f1d10; color: #FFD700;">${(s.result.method || 'rule').toUpperCase()}</span></div>
-            </div>
-          `;
-        }).join("")}
-      </div>
-    `}
-  `;
-}
-function setHistoryFilter(f) { historyFilter = f; renderHistoryPage(); }
-
-function exportCSV() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectScans = state.scans.filter(s => s.projectId === project.id);
-  const filtered = historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId === historyFilter);
-  
-  const headers = ['Timestamp','Part Number','Serial','Brand','Generation','Tray#','Scanned By','Method','Label','Raw Scan'];
-  const rows = filtered.map(s => {
-    const u = state.users.find(u => u.id === s.userId);
-    const tray = state.trays.find(t => t.id === s.trayId);
-    return [
-      new Date(s.ts).toLocaleString(),
-      s.result.partNumber || '',
-      s.result.serial || '',
-      s.result.brand || '',
-      s.result.generation || '',
-      tray?.trayNum || '',
-      u?.name || '',
-      s.result.method || 'rule',
-      s.result.label || '',
-      s.scan || ''
-    ].map(v => `"${String(v).replace(/"/g, '""')}"`);
-  });
-  
-  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${project.name.replace(/[^a-zA-Z0-9]/g, '_')}_scans_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('CSV downloaded!', '#3ed685');
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   MASTER PAGE — tray overview grouped by user
-   ════════════════════════════════════════════════════════════════════════ */
-let masterFilter = "all";
-function setMasterFilter(f) { masterFilter = f; renderMasterPage(); }
-
-function renderMasterPage() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectScans = state.scans.filter(s => s.projectId === project.id);
-  const projectTrays = state.trays.filter(t => t.projectId === project.id).sort((a,b) => a.trayNum - b.trayNum);
-  const members = state.users.filter(u => project.memberIds.includes(u.id));
-
-  // User summary cards
-  const userCards = members.map(u => {
-    const uSticks = projectTrays.filter(t => t.createdBy === u.id || t.ownerUserId === u.id).reduce((sum, t) => sum + t.sticks.length, 0);
-    const uTrays = projectTrays.filter(t => t.createdBy === u.id || t.ownerUserId === u.id).length;
-    return `<div style="background: #1a1a22; border-radius: 10px; padding: 14px 18px; min-width: 150px; border-left: 3px solid ${u.color};">
-      <div class="flex items-center gap-8" style="margin-bottom: 8px;">
-        <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-        <div><div style="font-weight: 700; color: #fff; font-size: 13px;">${escapeHtml(u.name)}</div>
-        <div style="font-size: 10px; color: #888; text-transform: uppercase;">${u.role}</div></div>
-      </div>
-      <div class="flex gap-16" style="margin-top: 6px;">
-        <div><div style="font-size: 22px; font-weight: 900; color: #fff;">${uSticks}</div><div style="font-size: 10px; color: #888; text-transform: uppercase;">sticks</div></div>
-        <div><div style="font-size: 22px; font-weight: 900; color: #fff;">${uTrays}</div><div style="font-size: 10px; color: #888; text-transform: uppercase;">trays</div></div>
-      </div>
-    </div>`;
-  }).join('');
-
-  // Brand distribution
-  const brandCounts = {};
-  projectTrays.forEach(t => { brandCounts[t.brand] = (brandCounts[t.brand]||0) + 1; });
-  const totalTrays = projectTrays.length || 1;
-  const brandBar = Object.entries(brandCounts).sort((a,b) => b[1]-a[1]).map(([brand, count]) => {
-    const bm = BRAND_META[brand] || BRAND_META.Unknown;
-    const pct = (count / totalTrays * 100).toFixed(1);
-    return `<div style="flex: ${count}; background: ${bm.hex}; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; color: #fff; letter-spacing: 0.5px; min-width: 30px;" title="${brand}: ${count} trays (${pct}%)">${brand.substring(0,3).toUpperCase()}</div>`;
-  }).join('');
-  const brandLegend = Object.entries(brandCounts).sort((a,b) => b[1]-a[1]).map(([brand, count]) => {
-    const bm = BRAND_META[brand] || BRAND_META.Unknown;
-    return `<span style="font-size: 11px; color: #888; display: inline-flex; align-items: center; gap: 4px; margin-right: 12px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: ${bm.hex}; display: inline-block;"></span>${brand} ${count}</span>`;
-  }).join('');
-
-  // Filter trays
-  const q = globalSearchQuery.toLowerCase().trim();
-  const filteredTrays = masterFilter === "all" ? projectTrays : projectTrays.filter(t => t.createdBy === masterFilter || t.ownerUserId === masterFilter);
-  const searchedTrays = filteredTrays.filter(t => {
-    if (!q) return true;
-    return t.partNumber.toLowerCase().includes(q) || t.trayNum.toString() === q;
-  });
-
-  // Tray table rows
-  const trayRows = searchedTrays.map(t => {
-    const owner = state.users.find(u => u.id === (t.ownerUserId || t.createdBy));
-    const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
-    const gm = GEN_META[t.generation] || GEN_META.Unknown;
-    const pct = (t.sticks.length / t.capacity * 100);
-    const barColor = t.sticks.length >= t.capacity ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
-    return `<div style="display: grid; grid-template-columns: 0.6fr 0.4fr 1.5fr 0.6fr 0.5fr 0.4fr 1.2fr; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #15151c; font-size: 12px;">
-      <div>${owner ? `<span class="pill" style="background: ${owner.color}; font-size: 10px;">${escapeHtml(owner.name)}</span>` : '-'}</div>
-      <div style="color: #FFD700; font-weight: 900; font-size: 14px;">#${t.trayNum}</div>
-      <div class="mono truncate" style="color: #fff; font-weight: 600;">${escapeHtml(t.partNumber)}</div>
-      <div><span class="pill" style="background: ${bm.hex}; font-size: 10px;">${escapeHtml(t.brand)}</span></div>
-      <div><span class="pill" style="background: ${gm.bg}; color: ${gm.fg}; font-size: 10px;">${escapeHtml(t.generation)}</span></div>
-      <div style="color: #fff; font-weight: 700; text-align: center;">${t.sticks.length}</div>
-      <div class="flex items-center gap-8">
-        <div class="tray-progress" style="flex: 1;"><div class="tray-progress-fill" style="width: ${pct}%; background: ${barColor};"></div></div>
-        <span style="font-size: 11px; color: #888; min-width: 45px;">${t.sticks.length}/${t.capacity}</span>
-      </div>
-    </div>`;
-  }).join('');
-
-  document.getElementById("page-content").innerHTML = `
-    <div class="flex items-center justify-between" style="margin-bottom: 16px;">
-      <div>
-        <h1 class="h" style="margin-bottom: 2px;">Master View \u00b7 ${masterFilter === 'all' ? 'All Users' : escapeHtml(state.users.find(u=>u.id===masterFilter)?.name || '')}</h1>
-        <div style="font-size: 12px; color: #888;">${projectTrays.reduce((sum, t) => sum + t.sticks.length, 0)} sticks \u00b7 ${projectTrays.length} trays \u00b7 ${members.length} active users</div>
-      </div>
-      <button class="btn-ghost" style="font-size: 11px; padding: 6px 14px;" onclick="exportMasterCSV()">\u2193 Export All CSV</button>
-    </div>
-
-    <div class="flex gap-12" style="margin-bottom: 24px; flex-wrap: wrap;">${userCards}</div>
-
-    <div style="margin-bottom: 24px;">
-      <div style="font-size: 12px; font-weight: 800; color: #FFD700; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; border-left: 3px solid #FFD700; padding-left: 10px;">Brand Distribution \u00b7 System-Wide</div>
-      <div style="display: flex; border-radius: 6px; overflow: hidden; margin-bottom: 6px;">${brandBar || '<div style="flex:1;background:#2a2a35;height:28px;"></div>'}</div>
-      <div>${brandLegend}</div>
-    </div>
-
-    <div>
-      <div class="flex items-center justify-between" style="margin-bottom: 10px;">
-        <div style="font-size: 12px; font-weight: 800; color: #FFD700; text-transform: uppercase; letter-spacing: 1.5px; border-left: 3px solid #FFD700; padding-left: 10px;">All Trays \u00b7 ${masterFilter === 'all' ? 'Grouped by User' : 'Filtered'} \u00b7 ${filteredTrays.length}</div>
-        <select onchange="setMasterFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 6px 10px; border-radius: 8px; font-size: 11px;">
-          <option value="all" ${masterFilter==='all'?'selected':''}>All users</option>
-          ${members.map(u => `<option value="${u.id}" ${masterFilter===u.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="display: grid; grid-template-columns: 0.6fr 0.4fr 1.5fr 0.6fr 0.5fr 0.4fr 1.2fr; gap: 10px; padding: 10px 16px; background: #15151c; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">
-          <div>User</div><div>Tray</div><div>Part Number</div><div>Brand</div><div>Gen</div><div>Sticks</div><div>Capacity</div>
-        </div>
-        ${trayRows || '<div style="padding: 24px; text-align: center; color: #666;">No trays yet</div>'}
-      </div>
-    </div>
-  `;
-}
-
-function exportMasterCSV() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectTrays = state.trays.filter(t => t.projectId === project.id).sort((a,b) => a.trayNum - b.trayNum);
-  const headers = ['Tray#','Part Number','Brand','Generation','Sticks','Capacity','Owner','Created'];
-  const rows = projectTrays.map(t => {
-    const owner = state.users.find(u => u.id === (t.ownerUserId || t.createdBy));
-    return [t.trayNum, t.partNumber, t.brand, t.generation, t.sticks.length, t.capacity, owner?.name||'', new Date(t.createdAt).toLocaleDateString()].map(v => `"${String(v).replace(/"/g,'""')}"`);
-  });
-  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `master-list-${project.name.replace(/[^a-zA-Z0-9]/g,'-')}-${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Master CSV downloaded!', '#3ed685');
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   ADMIN PAGE
-   ════════════════════════════════════════════════════════════════════════ */
-function renderAdminPage() {
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  const projectScans = state.scans.filter(s => s.projectId === project.id);
-  const projectTrays = state.trays.filter(t => t.projectId === project.id);
-  
-  document.getElementById("page-content").innerHTML = `
-    <h1 class="h">Admin · ${escapeHtml(project.name)}</h1>
-    
-    <div class="stats" style="margin-bottom: 24px;">
-      <div class="stat" style="border-top: 2px solid #3ed685;">
-        <div class="stat-label">Total sticks</div>
-        <div class="stat-value" style="color: #3ed685;">${projectTrays.reduce((sum, t) => sum + t.sticks.length, 0)}</div>
-      </div>
-      <div class="stat" style="border-top: 2px solid #4fa3ff;">
-        <div class="stat-label">Active trays</div>
-        <div class="stat-value" style="color: #4fa3ff;">${projectTrays.filter(t => t.sticks.length < t.capacity).length}</div>
-      </div>
-      <div class="stat" style="border-top: 2px solid #ff6b8a;">
-        <div class="stat-label">Full trays</div>
-        <div class="stat-value" style="color: #ff6b8a;">${projectTrays.filter(t => t.sticks.length >= t.capacity).length}</div>
-      </div>
-      <div class="stat" style="border-top: 2px solid #FFD700;">
-        <div class="stat-label">Members</div>
-        <div class="stat-value" style="color: #FFD700;">${project.memberIds.length}</div>
-      </div>
-    </div>
-    
-    <h2 class="h2" style="margin-bottom: 12px;">Project members</h2>
-    <div class="card card-tight" style="margin-bottom: 24px;">
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px;">
-        ${state.users.filter(u => u.role !== "admin").map(u => {
-          const sel = project.memberIds.includes(u.id);
-          return `
-            <button onclick="toggleProjectMember('${project.id}','${u.id}')" 
-              style="text-align: left; border: ${sel ? '2px solid ' + u.color : '2px solid #2a2a35'}; background: ${sel ? '#15151c' : 'transparent'}; border-radius: 10px; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
-              <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-              <div style="flex: 1; font-size: 12px; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
-              ${sel ? `<span style="color: ${u.color}; font-weight: 700;">✓</span>` : ""}
-            </button>
-          `;
-        }).join("")}
-      </div>
-    </div>
-    
-    <h2 class="h2" style="margin-bottom: 12px;">Manage system roles</h2>
-    <div class="card card-tight" style="margin-bottom: 24px;">
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;">
-        ${state.users.map(u => {
-          if (u.id === session.currentUser.id) return ''; // Prevent editing own role here
-          return `
-            <div style="border: 1px solid #2a2a35; background: #15151c; border-radius: 10px; padding: 10px; display: flex; align-items: center; justify-content: space-between;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-                <div style="font-size: 12px; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
-              </div>
-              <select onchange="changeUserRole('${u.id}', this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 4px 8px; border-radius: 4px; font-size: 11px;">
-                <option value="user" ${u.role === 'user' ? 'selected' : ''}>User</option>
-                <option value="supervisor" ${u.role === 'supervisor' ? 'selected' : ''}>Supervisor</option>
-                <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
-              </select>
-            </div>
-          `;
-        }).join("")}
-      </div>
-    </div>
-    
-    <h2 class="h2" style="margin-bottom: 12px;">All projects</h2>
-    <div class="card" style="padding: 0; overflow: hidden;">
-      ${state.projects.map(pr => `
-        <div style="padding: 14px 16px; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 12px;">
-          <div style="flex: 1;">
-            <div class="flex items-center gap-8">
-              <span style="color: #FFD700; font-weight: 700; font-size: 14px;">${escapeHtml(pr.name)}</span>
-              <span class="badge badge-${pr.mode}">${pr.mode.toUpperCase()}</span>
-            </div>
-            <div style="font-size: 11px; color: #888; margin-top: 4px;">
-              ${pr.memberIds.length} members · ${state.scans.filter(s => s.projectId === pr.id).length} scans · default ${pr.defaultCap}/tray
-            </div>
-          </div>
-          ${pr.id === project.id ? `<span style="color: #3ed685; font-size: 11px; font-weight: 700;">● ACTIVE</span>` : ""}
-        </div>
-      `).join("")}
-    </div>
-    
-    <div style="margin-top: 24px;">
-      <h2 class="h2" style="margin-bottom: 12px;">Danger zone</h2>
-      <div class="card card-tight">
-        <button class="btn-ghost" onclick="if(confirm('Clear all scans and trays for THIS project only?')){clearProjectData();}" 
-          style="border-color: #ffaa00; color: #ffaa00; margin-bottom: 8px; width: 100%;">
-          Clear CURRENT Project Data
-        </button>
-        <button class="btn-ghost" onclick="promptDeleteProject(session.currentProjectId, state.projects.find(p => p.id === session.currentProjectId)?.name || 'Project')" 
-          style="border-color: #ff6b8a; color: #ff6b8a; margin-bottom: 8px; width: 100%;">
-          Delete Entire Project
-        </button>
-        <button class="btn-ghost" onclick="if(confirm('Reset ALL data? This deletes all projects, scans, trays.')){localStorage.removeItem('${STORAGE_KEY}');location.reload();}" 
-          style="border-color: #ff6b8a; color: #ff6b8a; width: 100%;">
-          Reset all data
-        </button>
-      </div>
-    </div>
-  `;
-}
-async function toggleProjectMember(projectId, userId) {
-  const p = state.projects.find(p => p.id === projectId);
-  if (!p) return;
-  if (p.memberIds.includes(userId)) {
-    p.memberIds = p.memberIds.filter(id => id !== userId);
-  } else {
-    p.memberIds.push(userId);
-  }
-  await dbSave('projects', 'update', { updates: { memberIds: p.memberIds }, id: p.id }, 'id');
-  renderAdminPage();
-}
-async function clearProjectData() {
-  const pId = session.currentProjectId;
-  if (!pId) return;
-  
-  const scanIdsToDelete = state.scans.filter(s => s.projectId === pId).map(s => s.id);
-  const trayIdsToDelete = state.trays.filter(t => t.projectId === pId).map(t => t.id);
-  
-  // Local state update
-  state.scans = state.scans.filter(s => s.projectId !== pId);
-  state.trays = state.trays.filter(t => t.projectId !== pId);
-  state.trayCounters[pId] = 0;
-  
-  // Supabase cleanup (if using Supabase)
-  if (useSupabase) {
-    try {
-      if (scanIdsToDelete.length > 0) await sb.from('scans').delete().in('id', scanIdsToDelete);
-      if (trayIdsToDelete.length > 0) await sb.from('trays').delete().in('id', trayIdsToDelete);
-    } catch (e) {
-      console.error("Supabase clear failed", e);
-    }
-  } else {
-    saveLocalState();
-  }
-  
-  showToast("Project data cleared.", "#FFD700");
-  renderAdminPage();
-}
-
-async function deleteProjectById(pId) {
-  if (!pId) return;
-  
-  const scanIdsToDelete = state.scans.filter(s => s.projectId === pId).map(s => s.id);
-  const trayIdsToDelete = state.trays.filter(t => t.projectId === pId).map(t => t.id);
-  
-  state.scans = state.scans.filter(s => s.projectId !== pId);
-  state.trays = state.trays.filter(t => t.projectId !== pId);
-  state.projects = state.projects.filter(p => p.id !== pId);
-  delete state.trayCounters[pId];
-  
-  if (useSupabase) {
-    try {
-      if (scanIdsToDelete.length > 0) await sb.from('scans').delete().in('id', scanIdsToDelete);
-      if (trayIdsToDelete.length > 0) await sb.from('trays').delete().in('id', trayIdsToDelete);
-      await sb.from('projects').delete().eq('id', pId);
-    } catch (e) {
-      console.error("Supabase project delete failed", e);
-    }
-  }
-  
-  saveLocalState();
-  if (session.currentProjectId === pId) {
-    switchProject();
-  } else {
-    render();
-  }
-}
-
-async function promptDeleteProject(pId, pName) {
-  const answer = prompt(`To permanently delete project "${pName}" and all its data, type DELETE below:`);
-  if (answer === "DELETE") {
-    await deleteProjectById(pId);
-    showToast("Project deleted.", "#ff4444");
-  }
-}
-
-async function resetAllSystemData() {
-  const scanIds = state.scans.map(s => s.id);
-  const trayIds = state.trays.map(t => t.id);
-  const projIds = state.projects.map(p => p.id);
-  
-  state.projects = [];
-  state.scans = [];
-  state.trays = [];
-  state.trayCounters = {};
-  
-  if (useSupabase && sb) {
-    try {
-      if (scanIds.length > 0) await sb.from('scans').delete().in('id', scanIds);
-      if (trayIds.length > 0) await sb.from('trays').delete().in('id', trayIds);
-      if (projIds.length > 0) await sb.from('projects').delete().in('id', projIds);
-    } catch (e) { console.error("Supabase reset failed", e); }
-  }
-  
-  saveLocalState();
-  session.currentProjectId = null;
-  render();
-  showToast("All projects, scans, and trays have been deleted. Users were preserved.", "#3ed685");
-}
-
-function promptResetAllData() {
-  if (prompt('This will DELETE ALL PROJECTS, SCANS, AND TRAYS.\\n\\nUser accounts will NOT be deleted.\\n\\nType ARE YOU SURE below to confirm:') === 'ARE YOU SURE') {
-    resetAllSystemData();
-  }
-}
-
-async function handleCSVImport() {
-  const fileInput = document.getElementById("csv-upload");
-  if (!fileInput.files || fileInput.files.length === 0) {
-    showToast("Please select a CSV file", "#ff6b8a");
-    return;
-  }
-  const file = fileInput.files[0];
-  const text = await file.text();
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length < 2) { showToast("CSV is empty or missing headers", "#ff6b8a"); return; }
-  
-  const parseLine = (line) => {
-    const result = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      if (line[i] === '"') inQuotes = !inQuotes;
-      else if (line[i] === ',' && !inQuotes) { result.push(cur.trim()); cur = ''; }
-      else cur += line[i];
-    }
-    result.push(cur.trim());
-    return result;
-  };
-  
-  const headers = parseLine(lines[0]);
-  const normHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-  
-  // Auto-detect indices
-  const idxPart = normHeaders.findIndex(h => h.includes('part'));
-  const idxTray = normHeaders.findIndex(h => h === 'tray' || h === 'traynumber');
-  const idxBrand = normHeaders.findIndex(h => h.includes('brand'));
-  const idxGen = normHeaders.findIndex(h => h.includes('gen'));
-  const idxSerial = normHeaders.findIndex(h => h.includes('serial'));
-  const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
-  const idxQty = normHeaders.findIndex(h => h.includes('qty') || h.includes('quantity'));
-  
-  const firstRow = lines.length > 1 ? parseLine(lines[1]) : [];
-  
-  const getOptions = (selectedIdx) => {
-    return `<option value="-1">-- Ignore / Not in CSV --</option>` + 
-           headers.map((h, i) => `<option value="${i}" ${i === selectedIdx ? 'selected' : ''}>[Col ${i+1}] ${escapeHtml(h)} (e.g. ${escapeHtml(firstRow[i] || '')})</option>`).join('');
-  };
-  
-  const modalHTML = `
-    <h2 class="h2" style="margin-bottom: 16px;">Map CSV Columns</h2>
-    <div style="font-size: 12px; color: #888; margin-bottom: 20px;">
-      Please assign your CSV columns to the system fields.
-    </div>
-    
-    <div style="display: grid; gap: 12px; margin-bottom: 24px;">
-      <div>
-        <div class="label" style="color: #FFD700;">Part Number * (Required)</div>
-        <select id="map-part" style="width: 100%;">${getOptions(idxPart)}</select>
-      </div>
-      <div>
-        <div class="label" style="color: #FFD700;">Tray Number * (Required)</div>
-        <select id="map-tray" style="width: 100%;">${getOptions(idxTray)}</select>
-      </div>
-      <div>
-        <div class="label">Brand</div>
-        <select id="map-brand" style="width: 100%;">${getOptions(idxBrand)}</select>
-      </div>
-      <div>
-        <div class="label">Generation (e.g. DDR4)</div>
-        <select id="map-gen" style="width: 100%;">${getOptions(idxGen)}</select>
-      </div>
-      <div>
-        <div class="label">Serial Number</div>
-        <select id="map-serial" style="width: 100%;">${getOptions(idxSerial)}</select>
-      </div>
-      <div>
-        <div class="label">Quantity</div>
-        <select id="map-qty" style="width: 100%;">${getOptions(idxQty)}</select>
-      </div>
-      <div>
-        <div class="label">QR Scan Input (Raw string)</div>
-        <select id="map-scan" style="width: 100%;">${getOptions(idxScan)}</select>
-      </div>
-    </div>
-    
-    <div class="flex items-center justify-between" style="margin-top: 24px;">
-      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
-      <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Scans</button>
-    </div>
-  `;
-  
-  // Store lines in a global/state temporary variable for execution
-  window._pendingCSVImportLines = lines;
-  window._pendingCSVImportParseLine = parseLine;
-  
-  showModal(modalHTML);
-}
-
-async function executeCSVImport() {
-  const lines = window._pendingCSVImportLines;
-  const parseLine = window._pendingCSVImportParseLine;
-  if (!lines || !parseLine) return;
-  
-  const idxPart = parseInt(document.getElementById("map-part").value, 10);
-  const idxTray = parseInt(document.getElementById("map-tray").value, 10);
-  const idxBrand = parseInt(document.getElementById("map-brand").value, 10);
-  const idxGen = parseInt(document.getElementById("map-gen").value, 10);
-  const idxSerial = parseInt(document.getElementById("map-serial").value, 10);
-  const idxScan = parseInt(document.getElementById("map-scan").value, 10);
-  const idxQty = parseInt(document.getElementById("map-qty").value, 10);
-  
-  if (idxPart === -1 || idxTray === -1) {
-    showToast("Part Number and Tray columns are required.", "#ff6b8a");
-    return;
-  }
-  
-  hideModal();
-  document.getElementById("page-content").innerHTML = `<div class="page"><div style="color: #FFD700; font-size: 16px; font-weight: 600; text-align: center;">Importing CSV data... Please wait.</div></div>`;
-  
-  // Allow the UI to render the "Please wait" message before locking the thread
-  await new Promise(r => setTimeout(r, 50));
-  
-  let success = 0;
-  let skipped = 0;
-  const project = state.projects.find(p => p.id === session.currentProjectId);
-  let maxTrayNum = state.trayCounters[project.id] || 0;
-  
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseLine(lines[i]);
-    if (cols.length <= idxPart || cols.length <= idxTray) continue;
-    
-    const partNum = cols[idxPart];
-    if (!partNum || partNum === '#VALUE!') { skipped++; continue; }
-    
-    const trayNumRaw = parseInt(cols[idxTray], 10);
-    if (isNaN(trayNumRaw)) { skipped++; continue; }
-    maxTrayNum = Math.max(maxTrayNum, trayNumRaw);
-    
-    const brand = idxBrand >= 0 ? cols[idxBrand] : "Unknown";
-    const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen] : "Unknown";
-    const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial] : "";
-    const scanRaw = idxScan >= 0 ? cols[idxScan] : "";
-    let qty = 1;
-    if (idxQty >= 0) {
-      const parsedQty = parseInt(cols[idxQty], 10);
-      if (!isNaN(parsedQty) && parsedQty > 0) qty = parsedQty;
-    }
-    
-    // Find or create tray explicitly with this trayNum
-    let tray = state.trays.find(t => t.projectId === project.id && t.trayNum === trayNumRaw);
-    if (tray) {
-      if (tray.partNumber.toUpperCase() !== partNum.toUpperCase()) {
-        const replace = confirm(`Conflict in Tray #${trayNumRaw}!\n\nExisting part: ${tray.partNumber}\nCSV part: ${partNum}\n\nClick OK to REPLACE the tray's part number with the new one.\nClick Cancel to SKIP this row.`);
-        if (replace) {
-          tray.partNumber = partNum;
-          tray.brand = brand;
-          tray.generation = gen;
-        } else {
-          skipped++;
-          continue;
-        }
-      }
-    } else {
-      tray = {
-        id: `t_${project.id}_${trayNumRaw}_${Date.now()}_${i}`,
-        projectId: project.id, ownerUserId: session.currentUser.id,
-        partNumber: partNum, label: "", brand, generation: gen,
-        trayNum: trayNumRaw, capacity: project.defaultCap, sticks: [],
-        createdAt: Date.now(), createdBy: session.currentUser.id,
-        projectName: project.name
-      };
-      state.trays.push(tray);
-      await dbSave('trays', 'insert', tray);
-    }
-    
-    const scanId = `s_${Date.now()}_${Math.floor(Math.random()*1000)}_${i}`;
-    const newScan = {
-      id: scanId, projectId: project.id, userId: session.currentUser.id,
-      ts: Date.now() + i, scan: scanRaw,
-      result: { partNumber: partNum, serial, brand, generation: gen, method: "csv_import" },
-      trayId: tray.id, quantity: qty
-    };
-    
-    for (let q = 0; q < qty; q++) {
-      tray.sticks.push(scanId);
-    }
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks, partNumber: tray.partNumber, brand: tray.brand, generation: tray.generation }, id: tray.id }, 'id');
-    
-    state.scans.unshift(newScan);
-    await dbSave('scans', 'insert', newScan);
-    success++;
-  }
-  
-  state.trayCounters[project.id] = maxTrayNum;
-  window._pendingCSVImportLines = null;
-  window._pendingCSVImportParseLine = null;
-  document.getElementById("csv-upload").value = "";
-  
-  showToast(`Import complete: ${success} scans added (${skipped} skipped).`, "#3ed685");
-  renderAdminPage();
-}
-
-async function changeUserRole(userId, newRole) {
-  const u = state.users.find(u => u.id === userId);
-  if (!u) return;
-  u.role = newRole;
-  await dbSave('users', 'update', { updates: { role: newRole }, id: u.id }, 'id');
-  renderAdminPage();
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   ZEBRA GK420d LABEL PRINTING (4" × 1.5" at 203 DPI)
-   ════════════════════════════════════════════════════════════════════════ */
-function printTrayLabelById(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (tray) printTrayLabel(tray);
-}
-
-function printTrayLabel(tray) {
-  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
-  const labelHTML = buildLabelHTML(tray, brandColor);
-  
-  // Show preview modal
-  showModal(`
-    <h2 class="h2" style="color: #FFD700; margin-bottom: 8px;">Label preview · tray #${tray.trayNum}</h2>
-    <div style="font-size: 11px; color: #888; margin-bottom: 12px;">Zebra GK420d · 4" × 1.5" · 203 DPI</div>
-    <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: center;">
-      <div style="width: 4in; height: 1.5in; border: 1px solid #999; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        ${labelHTML}
-      </div>
-    </div>
-    <div style="font-size: 11px; color: #aaa; margin-bottom: 12px; padding: 10px; background: #15151c; border-radius: 8px; line-height: 1.5;">
-      <strong style="color: #FFD700;">To print:</strong> click "send to printer" → in the print dialog select your <strong>Zebra GK420d</strong>. Set paper size to <strong>4" × 1.5"</strong>, margins: none.
-    </div>
-    <div class="flex gap-8" style="justify-content: flex-end;">
-      <button class="btn-ghost" onclick="hideModal()">Close</button>
-      <button class="btn" onclick="doPrintLabel('${tray.id}')">Send to printer</button>
-    </div>
-  `);
-}
-
-function doPrintLabel(trayId) {
-  const tray = state.trays.find(t => t.id === trayId);
-  if (!tray) return;
-  const brandColor = BRAND_META[tray.brand]?.hex || "#5F5E5A";
-  const labelHTML = buildLabelHTML(tray, brandColor);
-  document.getElementById("print-area").innerHTML = labelHTML;
-  document.getElementById("print-area").classList.add("show");
-  hideModal();
-  setTimeout(() => {
-    window.print();
-    setTimeout(() => {
-      document.getElementById("print-area").classList.remove("show");
-    }, 500);
-  }, 100);
-}
-
-function buildLabelHTML(tray, brandColor) {
-  const date = new Date(tray.createdAt).toLocaleDateString();
-  const barcodeData = `TRAY-${tray.trayNum}-${tray.partNumber}`;
-  return `
-    <div style="width: 4in; height: 1.5in; box-sizing: border-box; display: flex; flex-direction: column; padding: 0.06in 0.15in; font-family: 'Helvetica', Arial, sans-serif; color: #000; background: #fff; overflow: hidden;">
-      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9pt; margin-bottom: 0.04in;">
-        <span style="font-weight: 900; font-size: 10pt;">${escapeHtml(tray.projectName)}</span>
-        <span style="display: flex; gap: 4px;">
-          <span style="border: 2px solid #000; padding: 1px 8px; font-size: 9pt; font-weight: 900; letter-spacing: 0.5px;">${escapeHtml(tray.brand.toUpperCase())}</span>
-          <span style="background: #000; color: #fff; padding: 1px 8px; font-size: 9pt; font-weight: 900; letter-spacing: 0.5px;">${escapeHtml(tray.generation)}</span>
-        </span>
-      </div>
-      <div style="display: flex; align-items: center; gap: 0.12in; flex: 1;">
-        <div style="font-size: 48pt; font-weight: 900; line-height: 1; letter-spacing: -2px;">#${tray.trayNum}</div>
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-family: 'Courier New', monospace; font-size: 13pt; font-weight: 900; word-break: break-all; line-height: 1.1;">${escapeHtml(tray.partNumber)}</div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.04in;">
-            <span style="font-size: 8pt; color: #000; font-weight: 600;">cap ${tray.capacity} \u00b7 ${date}</span>
-            <span style="font-size: 10pt; font-weight: 900; border: 2px solid #000; padding: 0px 8px; letter-spacing: 0.5px;">QTY: _____</span>
-          </div>
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 0.1in; margin-top: 0.02in;">
-        <div style="display: flex; height: 0.16in; gap: 1px;">
-          ${Array.from({length: 40}, (_, i) => `<div style="width: ${(i*7) % 3 === 0 ? '2px' : '1px'}; background: #000;"></div>`).join("")}
-        </div>
-        <div style="font-family: 'Courier New', monospace; font-size: 7pt; font-weight: bold;">${escapeHtml(barcodeData)}</div>
-      </div>
-    </div>
-  `;
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   UTILITIES
-   ════════════════════════════════════════════════════════════════════════ */
-function escapeHtml(s) {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-function timeAgo(ts) {
-  const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-function showModal(html) {
-  document.getElementById("modal-content").innerHTML = html;
-  document.getElementById("modal").classList.add("show");
-}
-function hideModal() {
-  document.getElementById("modal").classList.remove("show");
-}
-function showToast(msg, color) {
-  const c = document.getElementById("toast-container");
-  const t = document.createElement("div");
-  t.className = "toast";
-  t.style.color = color;
-  t.style.border = `2px solid ${color}`;
-  t.textContent = msg;
-  c.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   BOOT
-   ════════════════════════════════════════════════════════════════════════ */
-render(); // Show loading screen immediately
-initSupabaseState(); // Then fetch from Supabase in background
 </script>
 </body>
 </html>
