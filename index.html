@@ -20,7 +20,7 @@
   
   /* ─── Layout primitives ─────────────────────────────────────────────── */
   .page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-  .container { max-width: 1280px; margin: 0 auto; padding: 24px 20px; }
+  .container { width: 100%; max-width: 1800px; margin: 0 auto; padding: 24px 20px; }
   
   /* ─── Auth ──────────────────────────────────────────────────────────── */
   .auth-card {
@@ -89,7 +89,7 @@
     position: sticky; top: 0; z-index: 50;
   }
   .topbar-inner {
-    max-width: 1280px; margin: 0 auto; padding: 12px 20px;
+    width: 100%; max-width: 1800px; margin: 0 auto; padding: 12px 20px;
     display: flex; align-items: center; gap: 16px;
   }
   .nav { flex: 1; display: flex; gap: 4px; justify-content: center; }
@@ -436,37 +436,45 @@ function setupRealtime() {
   
   const channel = sb.channel('db-changes');
   
+  // Safe rendering logic to avoid nuking inputs while typing
+  const safeRender = () => {
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    render();
+  };
+  
   channel
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans' }, payload => {
       if (!state.scans.find(s => s.id === payload.new.id)) {
         state.scans.unshift(payload.new);
-        if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') render();
+        if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays' }, payload => {
       if (!state.trays.find(t => t.id === payload.new.id)) {
         state.trays.push(payload.new);
         updateTrayCounters();
-        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') render();
+        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trays' }, payload => {
       const idx = state.trays.findIndex(t => t.id === payload.new.id);
       if (idx !== -1) {
         state.trays[idx] = payload.new;
-        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') render();
+        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
       }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects' }, payload => {
       const idx = state.projects.findIndex(p => p.id === payload.new.id);
       if (idx !== -1) {
         state.projects[idx] = payload.new;
-        if (session.page === 'projects' || session.page === 'scanner') render();
+        if (session.page === 'projects' || session.page === 'scanner') safeRender();
       }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'users' }, payload => {
       if (!state.users.find(u => u.id === payload.new.id)) {
         state.users.push(payload.new);
+        if (session.page === 'admin') safeRender();
       }
     })
     .subscribe();
@@ -499,7 +507,12 @@ async function fetchDataSilent() {
     }
     
     updateTrayCounters();
-    render();
+    
+    // Only re-render if user is NOT typing
+    const active = document.activeElement;
+    if (!(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'))) {
+      render();
+    }
   } catch (err) { console.warn("Realtime refresh failed:", err); }
 }
 
@@ -1316,7 +1329,7 @@ function renderScanner() {
       
       <div>
         <h1 class="h">Recent · ${projectScans.reduce((sum, s) => sum + (s.quantity || 1), 0)} sticks</h1>
-        <div class="card" style="padding: 0; overflow: hidden; max-height: 720px; overflow-y: auto;">
+        <div class="card" style="padding: 0; overflow: hidden; max-height: calc(100vh - 220px); overflow-y: auto;">
           ${projectScans.length === 0 ? `
             <div class="empty" style="padding: 32px;">
               <div style="font-size: 14px;">No scans yet</div>
