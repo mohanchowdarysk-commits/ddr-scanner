@@ -478,29 +478,71 @@ function updateTrayCounters() {
   const mergedTrays = [];
   let changed = false;
   
+  // 1. Clean and normalize tray numbers
   for (const t of state.trays) {
-    t.trayNum = parseInt(t.trayNum, 10) || 0;
+    if (!t) continue;
+    let num = parseInt(t.trayNum, 10);
+    if (isNaN(num)) num = 0;
+    t.trayNum = num;
+
     const project = state.projects.find(p => p.id == t.projectId);
-    const key = (project && project.mode === 'separate') 
+    if (!project) continue;
+
+    const key = (project.mode === 'separate') 
       ? `${t.projectId}_${t.ownerUserId || t.createdBy}_${t.trayNum}`
       : `${t.projectId}_${t.trayNum}`;
     
-    if (!trayMap[key]) {
-      trayMap[key] = t;
+    if (!trayMap[key] || t.trayNum === 0) {
+      if (t.trayNum !== 0) trayMap[key] = t;
       mergedTrays.push(t);
     } else {
-      trayMap[key].sticks = [...(trayMap[key].sticks || []), ...(t.sticks || [])];
-      if (useSupabase && sb) sb.from('trays').delete().eq('id', t.id).then();
+      const survivingTray = trayMap[key];
+      const removedTrayId = t.id;
+      
+      console.log(`Merging Tray #${t.trayNum} (${removedTrayId} -> ${survivingTray.id})`);
+      
+      // Merge sticks
+      const allSticks = [...(survivingTray.sticks || []), ...(t.sticks || [])];
+      survivingTray.sticks = [...new Set(allSticks)];
+      
+      // Update ALL scan references (including those not yet in state.scans if any)
+      state.scans.forEach(s => {
+        if (s.trayId === removedTrayId) s.trayId = survivingTray.id;
+      });
+      
+      // Update session references to prevent UI flicker/errors
+      if (session.lastScan && session.lastScan.trayId === removedTrayId) {
+        session.lastScan.trayId = survivingTray.id;
+      }
+      
+      if (useSupabase && sb) {
+        sb.from('scans').update({ trayId: survivingTray.id }).eq('trayId', removedTrayId).then();
+        sb.from('trays').update({ sticks: survivingTray.sticks }).eq('id', survivingTray.id).then();
+        sb.from('trays').delete().eq('id', removedTrayId).then();
+      }
       changed = true;
     }
     
-    if (!state.trayCounters[t.projectId] || t.trayNum > state.trayCounters[t.projectId]) {
-      state.trayCounters[t.projectId] = t.trayNum;
+    // Track max tray number for each project
+    if (t.trayNum > 0) {
+      const current = parseInt(state.trayCounters[t.projectId], 10) || 0;
+      state.trayCounters[t.projectId] = Math.max(current, t.trayNum);
+    }
+  }
+  
+  // Protective check: never delete the tray that was JUST scanned in this session
+  if (changed && session.lastScan) {
+    const activeTrayId = session.lastScan.trayId;
+    const stillExists = mergedTrays.some(mt => mt.id === activeTrayId);
+    if (!stillExists) {
+      // Find it in the original list and put it back to prevent "undefined" state
+      const activeTray = state.trays.find(at => at.id === activeTrayId);
+      if (activeTray) mergedTrays.push(activeTray);
     }
   }
   
   if (changed) {
-    state.trays = mergedTrays;
+    state.trays = mergedTrays.filter(Boolean);
     saveLocalState();
   }
 }
@@ -1010,9 +1052,15 @@ function generateId(prefix) {
    TRAY ASSIGNMENT — fast local-first, sync later
    ════════════════════════════════════════════════════════════════════════ */
 function getNextTrayNum(projectId) {
-  // Fast: use local counter. Periodic sync keeps it accurate.
-  const localMax = state.trayCounters[projectId] || 0;
-  return localMax + 1;
+  // Always verify against the actual trays list to prevent duplicates
+  const trays = state.trays.filter(t => t.projectId == projectId);
+  const liveMax = trays.length > 0 ? Math.max(...trays.map(t => parseInt(t.trayNum, 10) || 0)) : 0;
+  
+  // Use the larger of the cached counter or live max, ensuring we never return NaN
+  const cached = parseInt(state.trayCounters[projectId], 10) || 0;
+  const currentMax = Math.max(cached, liveMax);
+  state.trayCounters[projectId] = currentMax;
+  return currentMax + 1;
 }
 
 function assignTray(projectId, userId, classification) {
@@ -1482,7 +1530,7 @@ function renderScanner() {
               <div style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                 <span class="mono" style="font-size: 0.95rem; font-weight: 800; color: #FFD700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${escapeHtml(ls.result?.partNumber || '?')}</span>
                 <span style="color: #444;">→</span>
-                <span style="font-size: 0.85rem; color: #3ed685; font-weight: 700;">Tray #${lt?.trayNum || '?'}</span>
+                <span style="font-size: 0.85rem; color: #3ed685; font-weight: 700;">Tray #${lt?.trayNum ?? '?'}</span>
                 <span style="font-size: 0.75rem; color: #555;">(${lt?.sticks?.length || 0}/${lt?.capacity || '?'})</span>
                 ${ls.result?.serial ? `<span class="mono" style="font-size: 0.75rem; color: #888;">S/N: ${escapeHtml(ls.result.serial)}</span>` : ''}
               </div>
@@ -1524,7 +1572,7 @@ function renderScanner() {
                 <div style="flex: 1; min-width: 0;">
                   <div class="mono truncate" style="font-size: 1rem; color: #fff; font-weight: 600;">${escapeHtml(s.result.partNumber || s.scan.slice(0, 30))}</div>
                   <div style="font-size: 0.85rem; color: #888; margin-top: 0.25rem;">
-                    Tray #${tray?.trayNum} · ${timeAgo(s.ts)}
+                    Tray #${tray?.trayNum ?? '?'} · ${timeAgo(s.ts)}
                     ${tray && state.users.find(u2 => u2.id == tray.ownerUserId) ? ` · <span style="color: ${state.users.find(u2 => u2.id == tray.ownerUserId).color}; opacity: 0.8; font-weight: 700;">${state.users.find(u2 => u2.id == tray.ownerUserId).name}</span>` : ""}
                   </div>
                   ${s.result.serial ? `<div class="mono" style="font-size: 0.85rem; color: #3ed685; margin-top: 0.125rem;">S/N: ${escapeHtml(s.result.serial)}</div>` : ''}
@@ -1987,6 +2035,12 @@ async function doScan() {
     
     renderResultCard(newScan.result, trayRef);
     
+    // --- INSTANT: Show label immediately if needed ---
+    const project = state.projects.find(p => p.id == session.currentProjectId);
+    if (assignment.isNew && project?.autoprint) {
+      printTrayLabel(trayRef);
+    }
+    
     // --- BACKGROUND: fire DB writes without blocking the UI ---
     (async () => {
       try {
@@ -1996,11 +2050,6 @@ async function doScan() {
           await dbSave('trays', 'update', { updates: { sticks: trayRef.sticks }, id: trayRef.id }, 'id');
         }
         await dbSave('scans', 'insert', newScan);
-        
-        const project = state.projects.find(p => p.id == session.currentProjectId);
-        if (assignment.isNew && project?.autoprint) {
-          printTrayLabel(trayRef);
-        }
       } catch (err) {
         console.error("Background DB save error:", err);
       }
@@ -2012,6 +2061,41 @@ async function doScan() {
   }
   
   btn.textContent = "Scan ▶"; btn.disabled = false;
+  renderScanner();
+}
+
+async function undoLastScan() {
+  if (!session.lastScan) return;
+  const lastScanId = session.lastScan.id;
+  const lastTrayId = session.lastScan.trayId;
+  const isNewTray = session.lastAssignment?.isNew;
+  
+  // Clear session refs immediately to prevent double-undo
+  session.lastScan = null;
+  session.lastAssignment = null;
+  
+  showToast("Undoing last scan...", "#FFD700");
+  
+  // 1. Remove from local state
+  state.scans = state.scans.filter(s => s.id !== lastScanId);
+  
+  // 2. Remove from tray sticks
+  const tray = state.trays.find(t => t.id === lastTrayId);
+  if (tray) {
+    tray.sticks = (tray.sticks || []).filter(id => id !== lastScanId);
+  }
+  
+  // 3. Delete from DB in background
+  if (useSupabase && sb) {
+    // If it was the only stick, the tray might need deletion (handled by sync normally, but we can be proactive)
+    if (tray && tray.sticks.length === 0) {
+       // We'll let the background sync handle cleanup to keep it simple and fast
+    }
+    sb.from('trays').update({ sticks: tray?.sticks || [] }).eq('id', lastTrayId).then();
+    sb.from('scans').delete().eq('id', lastScanId).then();
+  }
+  
+  saveLocalState();
   renderScanner();
 }
 
