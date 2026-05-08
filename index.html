@@ -1007,30 +1007,15 @@ function generateId(prefix) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TRAY ASSIGNMENT — concurrency-safe
+   TRAY ASSIGNMENT — fast local-first, sync later
    ════════════════════════════════════════════════════════════════════════ */
-async function getNextTrayNum(projectId) {
-  // Always re-read from Supabase to get the true max tray number
-  if (useSupabase && sb) {
-    try {
-      const { data, error } = await sb
-        .from('trays')
-        .select('trayNum')
-        .eq('projectId', projectId)
-        .order('trayNum', { ascending: false })
-        .limit(1);
-      if (!error && data && data.length > 0) {
-        const dbMax = parseInt(data[0].trayNum, 10) || 0;
-        const localMax = state.trayCounters[projectId] || 0;
-        return Math.max(dbMax, localMax) + 1;
-      }
-    } catch (e) { console.warn("getNextTrayNum DB read failed:", e); }
-  }
-  return (state.trayCounters[projectId] || 0) + 1;
+function getNextTrayNum(projectId) {
+  // Fast: use local counter. Periodic sync keeps it accurate.
+  const localMax = state.trayCounters[projectId] || 0;
+  return localMax + 1;
 }
 
-function assignTrayLocal(projectId, userId, classification) {
-  // Pure local lookup — finds existing open tray or returns null
+function assignTray(projectId, userId, classification) {
   if (!classification?.partNumber) return null;
   const project = state.projects.find(p => p.id == projectId);
   if (!project) return null;
@@ -1038,7 +1023,7 @@ function assignTrayLocal(projectId, userId, classification) {
   const part = classification.partNumber.toUpperCase();
   const candidates = state.trays.filter(t => {
     if (t.projectId != projectId) return false;
-    if (t.partNumber.toUpperCase() != part) return false;
+    if ((t.partNumber || '').toUpperCase() != part) return false;
     if (project.mode === "separate" && t.ownerUserId != userId) return false;
     return true;
   });
@@ -1047,27 +1032,16 @@ function assignTrayLocal(projectId, userId, classification) {
   const open = sorted.find(t => (t.sticks?.length || 0) < t.capacity);
   if (open) return { tray: open, status: "ADDED" };
 
-  return { needsNew: true, hasOverflow: candidates.length > 0, classification, projectId, userId };
-}
-
-async function assignTray(projectId, userId, classification) {
-  const local = assignTrayLocal(projectId, userId, classification);
-  if (!local) return null;
-  if (!local.needsNew) return local;
-
-  // Need a new tray — get next number atomically
-  const project = state.projects.find(p => p.id == projectId);
-  if (!project) return null;
-  
-  const newNum = await getNextTrayNum(projectId);
+  // Create new tray
+  const newNum = getNextTrayNum(projectId);
   const newTray = {
     id: generateId('t'),
     projectId,
     ownerUserId: project.mode === "separate" ? userId : null,
     partNumber: classification.partNumber,
     label: classification.label || "",
-    brand: classification.brand,
-    generation: classification.generation,
+    brand: classification.brand || "Unknown",
+    generation: classification.generation || "Unknown",
     trayNum: newNum,
     capacity: project.defaultCap,
     sticks: [],
@@ -1075,38 +1049,7 @@ async function assignTray(projectId, userId, classification) {
     createdBy: userId,
     projectName: project.name,
   };
-  
-  // Double-check: did another user just create this tray while we were waiting?
-  if (useSupabase && sb) {
-    try {
-      const { data } = await sb
-        .from('trays')
-        .select('*')
-        .eq('projectId', projectId)
-        .ilike('partNumber', classification.partNumber);
-      
-      if (data && data.length > 0) {
-        // Check if any returned tray is actually open
-        for (const dbTray of data) {
-          const sticksArr = Array.isArray(dbTray.sticks) ? dbTray.sticks : [];
-          if (sticksArr.length < dbTray.capacity) {
-            if (project.mode === "separate" && dbTray.ownerUserId != userId) continue;
-            // Found an open tray created by another user — use it
-            const existing = state.trays.find(t => t.id == dbTray.id);
-            if (existing) {
-              existing.sticks = sticksArr; // refresh sticks from DB
-              return { tray: existing, status: "ADDED" };
-            } else {
-              state.trays.push(dbTray);
-              return { tray: dbTray, status: "ADDED" };
-            }
-          }
-        }
-      }
-    } catch (e) { console.warn("Concurrency check failed, proceeding with new tray:", e); }
-  }
-
-  return { tray: newTray, status: local.hasOverflow ? "OVERFLOW" : "NEW", isNew: true, newNum };
+  return { tray: newTray, status: candidates.length > 0 ? "OVERFLOW" : "NEW", isNew: true, newNum };
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1920,6 +1863,7 @@ async function doBulkScan() {
   btn.disabled = true;
   window.isBulkScanning = true;
   let success = 0;
+  const dbOps = []; // queue DB writes for background
   
   for (let i = 0; i < lines.length; i++) {
     btn.textContent = `Processing ${i+1}/${lines.length}...`;
@@ -1927,41 +1871,48 @@ async function doBulkScan() {
     const result = await classify(scan);
     if (!result || !result.partNumber) continue;
     
-    await withScanLock(session.currentProjectId, async () => {
-      let assignment = await assignTray(session.currentProjectId, session.currentUser.id, result);
-      if (!assignment) return;
-      
-      const scanId = generateId('s');
-      const newScan = {
-        id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-        ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
-      };
-      if (assignment.isNew) {
-        const newTrayData = { ...assignment.tray, sticks: [scanId] };
-        state.trays.push(newTrayData);
-        state.trayCounters[session.currentProjectId] = assignment.newNum;
-        await dbSave('trays', 'insert', newTrayData);
-      } else {
-        const tray = state.trays.find(t => t.id == assignment.tray.id);
-        tray.sticks.push(scanId);
-        await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-      }
-      state.scans.unshift(newScan);
-      await dbSave('scans', 'insert', newScan);
-      
-      session.lastScan = newScan;
-      session.lastAssignment = assignment;
-      success++;
-    });
-    await new Promise(r => setTimeout(r, 50));
+    const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
+    if (!assignment) continue;
+    
+    const scanId = generateId('s');
+    const newScan = {
+      id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+      ts: Date.now() + i, scan, result, trayId: assignment.tray.id,
+    };
+    if (assignment.isNew) {
+      assignment.tray.sticks = [scanId];
+      state.trays.push(assignment.tray);
+      state.trayCounters[session.currentProjectId] = assignment.newNum;
+      dbOps.push({ table: 'trays', action: 'insert', data: assignment.tray });
+    } else {
+      assignment.tray.sticks.push(scanId);
+      dbOps.push({ table: 'trays', action: 'update', data: { updates: { sticks: assignment.tray.sticks }, id: assignment.tray.id }, matchField: 'id' });
+    }
+    state.scans.unshift(newScan);
+    dbOps.push({ table: 'scans', action: 'insert', data: newScan });
+    
+    session.lastScan = newScan;
+    session.lastAssignment = assignment;
+    success++;
+    
+    // Yield to UI every 10 items
+    if (i % 10 === 9) await new Promise(r => setTimeout(r, 10));
   }
   
+  saveLocalState();
   window.isBulkScanning = false;
   btn.textContent = 'Scan All \u25b6';
   btn.disabled = false;
   input.value = '';
   showToast(`\u2713 Bulk scan: ${success}/${lines.length} processed`, '#3ed685');
   renderScanner();
+  
+  // Fire all DB writes in background
+  (async () => {
+    for (const op of dbOps) {
+      await dbSave(op.table, op.action, op.data, op.matchField);
+    }
+  })();
 }
 
 async function doScan() {
@@ -1990,68 +1941,71 @@ async function doScan() {
       return;
     }
     
-    // Use lock to prevent concurrent tray creation races
-    await withScanLock(session.currentProjectId, async () => {
-      const assignment = await assignTray(session.currentProjectId, session.currentUser.id, result);
-      if (!assignment) {
-        showToast("No part number — cannot assign tray", "#ff6b8a");
-        return;
-      }
-      
-      const scanId = generateId('s');
-      const newScan = {
-        id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
-        ts: Date.now(), scan, result, trayId: assignment.tray.id,
-      };
-      
-      if (assignment.isNew) {
-        const newTrayData = { ...assignment.tray, sticks: [scanId] };
-        state.trays.push(newTrayData);
-        state.trayCounters[session.currentProjectId] = assignment.newNum;
-        await dbSave('trays', 'insert', newTrayData);
-      } else {
-        // Refresh sticks from DB before appending to prevent overwrites
-        const tray = state.trays.find(t => t.id == assignment.tray.id);
-        if (useSupabase && sb) {
-          try {
-            const { data } = await sb.from('trays').select('sticks').eq('id', tray.id).single();
-            if (data && Array.isArray(data.sticks)) tray.sticks = data.sticks;
-          } catch (e) { /* use local */ }
+    // --- LOCAL-FIRST: all state changes happen instantly ---
+    const assignment = assignTray(session.currentProjectId, session.currentUser.id, result);
+    if (!assignment) {
+      showToast("No part number — cannot assign tray", "#ff6b8a");
+      btn.textContent = "Scan ▶"; btn.disabled = false;
+      return;
+    }
+    
+    const scanId = generateId('s');
+    const newScan = {
+      id: scanId, projectId: session.currentProjectId, userId: session.currentUser.id,
+      ts: Date.now(), scan, result, trayId: assignment.tray.id,
+    };
+    
+    let trayRef;
+    if (assignment.isNew) {
+      assignment.tray.sticks = [scanId];
+      state.trays.push(assignment.tray);
+      state.trayCounters[session.currentProjectId] = assignment.newNum;
+      trayRef = assignment.tray;
+    } else {
+      trayRef = assignment.tray;
+      trayRef.sticks.push(scanId);
+    }
+    state.scans.unshift(newScan);
+    saveLocalState(); // instant local persist
+    
+    input.value = "";
+    
+    session.lastScan = newScan;
+    session.lastAssignment = assignment;
+    
+    // Duplicate serial check (local, instant)
+    session.lastDuplicateWarning = null;
+    if (result.serial) {
+      const dupe = checkDuplicateSerial(result.serial, session.currentProjectId, scanId);
+      if (dupe) session.lastDuplicateWarning = { existingTrayNum: dupe.trayNum };
+    }
+    
+    const trayN = trayRef.trayNum;
+    if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
+    else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
+    else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
+    
+    renderResultCard(newScan.result, trayRef);
+    
+    // --- BACKGROUND: fire DB writes without blocking the UI ---
+    (async () => {
+      try {
+        if (assignment.isNew) {
+          await dbSave('trays', 'insert', trayRef);
+        } else {
+          await dbSave('trays', 'update', { updates: { sticks: trayRef.sticks }, id: trayRef.id }, 'id');
         }
-        tray.sticks.push(scanId);
-        await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+        await dbSave('scans', 'insert', newScan);
+        
+        const project = state.projects.find(p => p.id == session.currentProjectId);
+        if (assignment.isNew && project?.autoprint) {
+          printTrayLabel(trayRef);
+        }
+      } catch (err) {
+        console.error("Background DB save error:", err);
       }
-      state.scans.unshift(newScan);
-      await dbSave('scans', 'insert', newScan);
-      
-      input.value = "";
-      
-      const trayN = assignment.tray.trayNum || assignment.newNum;
-      const project = state.projects.find(p => p.id == session.currentProjectId);
-      
-      session.lastScan = newScan;
-      session.lastAssignment = assignment;
-      
-      // Check for duplicate serial
-      session.lastDuplicateWarning = null;
-      if (result.serial) {
-        const dupe = checkDuplicateSerial(result.serial, session.currentProjectId, scanId);
-        if (dupe) session.lastDuplicateWarning = { existingTrayNum: dupe.trayNum };
-      }
-      
-      renderResultCard(newScan.result, state.trays.find(t => t.id == assignment.tray.id));
-      
-      if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
-      else if (assignment.status === "OVERFLOW") showToast(`⊕ OVERFLOW → New Tray #${trayN}`, "#4fa3ff");
-      else showToast(`✓ Added to Tray #${trayN}`, "#FFD700");
-      
-      if (assignment.isNew && project.autoprint) {
-        setTimeout(() => {
-          const tray = state.trays.find(t => t.id == assignment.tray.id);
-          printTrayLabel(tray);
-        }, 400);
-      }
-    });
+    })();
+    
   } catch (err) {
     console.error("Scan error:", err);
     showToast("Scan failed: " + err.message, "#ff6b8a");
@@ -2258,19 +2212,12 @@ async function doEditStick(trayId, stickIndex) {
       await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
       
       if (assignment.isNew) {
-        const newTray = { ...assignment.tray, sticks: [scanId] };
-        state.trays.push(newTray);
+        assignment.tray.sticks = [scanId];
+        state.trays.push(assignment.tray);
         state.trayCounters[session.currentProjectId] = assignment.newNum;
-        await dbSave('trays', 'insert', newTray);
+        await dbSave('trays', 'insert', assignment.tray);
       } else {
-        const targetTray = state.trays.find(t => t.id == assignment.tray.id);
-        // Refresh sticks from DB before push
-        if (useSupabase && sb) {
-          try {
-            const { data } = await sb.from('trays').select('sticks').eq('id', targetTray.id).single();
-            if (data && Array.isArray(data.sticks)) targetTray.sticks = data.sticks;
-          } catch (e) { /* use local */ }
-        }
+        const targetTray = assignment.tray;
         targetTray.sticks.push(scanId);
         await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
       }
@@ -2593,13 +2540,6 @@ async function doMoveStick(trayId, stickIndex) {
           </div>`;
           return;
         }
-      }
-      // Refresh target tray sticks from DB
-      if (useSupabase && sb) {
-        try {
-          const { data } = await sb.from('trays').select('sticks').eq('id', targetTray.id).single();
-          if (data && Array.isArray(data.sticks)) targetTray.sticks = data.sticks;
-        } catch (e) { /* use local */ }
       }
     } else {
       // Create new tray
