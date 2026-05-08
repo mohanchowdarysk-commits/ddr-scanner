@@ -576,8 +576,10 @@ function setupRealtime() {
       }
     });
     
-  // Periodic full sync every 30 seconds for multi-user consistency
-  setInterval(() => fetchDataSilent(), 30000);
+  // Periodic full sync + offline queue flush every 30 seconds
+  setInterval(() => { fetchDataSilent(); flushOfflineQueue(); }, 30000);
+  // Initial flush on connect
+  setTimeout(() => flushOfflineQueue(), 3000);
 }
 
 window.isBulkScanning = false;
@@ -614,8 +616,45 @@ async function fetchDataSilent() {
 }
 
 // Helper to save to Supabase OR localStorage with retry
+/* ═══ OFFLINE QUEUE — queues failed DB operations for later sync ═══ */
+const OFFLINE_QUEUE_KEY = "ddr_offline_queue";
+function getOfflineQueue() {
+  try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch { return []; }
+}
+function saveOfflineQueue(queue) {
+  try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue)); } catch (e) {}
+}
+function queueOfflineOp(table, action, data, matchField) {
+  const queue = getOfflineQueue();
+  queue.push({ table, action, data, matchField, ts: Date.now() });
+  saveOfflineQueue(queue);
+}
+async function flushOfflineQueue() {
+  if (!useSupabase || !sb) return;
+  const queue = getOfflineQueue();
+  if (queue.length === 0) return;
+  
+  const failed = [];
+  for (const op of queue) {
+    try {
+      let res;
+      if (op.action === 'insert') res = await sb.from(op.table).upsert(op.data); // use upsert for safety
+      else if (op.action === 'update') res = await sb.from(op.table).update(op.data.updates).eq(op.matchField, op.data.id);
+      else if (op.action === 'upsert') res = await sb.from(op.table).upsert(op.data);
+      else if (op.action === 'delete') res = await sb.from(op.table).delete().eq(op.matchField, op.data.id);
+      if (res && res.error) failed.push(op);
+    } catch (e) { failed.push(op); }
+  }
+  saveOfflineQueue(failed);
+  if (queue.length > failed.length) {
+    console.log('Offline queue: synced ' + (queue.length - failed.length) + ' ops, ' + failed.length + ' remaining');
+    if (failed.length === 0) showToast('Offline changes synced!', '#3ed685');
+  }
+}
+
 async function dbSave(table, action, data, matchField, retries = 2) {
   if (useSupabase && sb) {
+    let success = false;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         let res;
@@ -625,26 +664,28 @@ async function dbSave(table, action, data, matchField, retries = 2) {
         else if (action === 'delete') res = await sb.from(table).delete().eq(matchField, data.id);
         
         if (res && res.error) {
-          // Duplicate key on insert? Might be a race — try upsert instead
           if (action === 'insert' && res.error.code === '23505' && attempt < retries) {
-            console.warn(`Duplicate key on ${table}, retrying as upsert...`);
+            console.warn('Duplicate key on ' + table + ', retrying as upsert...');
             res = await sb.from(table).upsert(data);
-            if (res && !res.error) break;
+            if (res && !res.error) { success = true; break; }
           }
           if (attempt === retries) {
-            console.error(`DB ${action} on ${table} failed after ${retries + 1} attempts:`, res.error);
-            showToast(`DB Error: ${res.error.message}`, "#ff4444");
+            console.error('DB ' + action + ' on ' + table + ' failed:', res.error);
           }
         } else {
-          break; // Success
+          success = true;
+          break;
         }
       } catch (err) { 
         if (attempt === retries) {
-          console.error(`DB ${action} failed exception:`, err); 
-          showToast("Database connection error — changes saved locally", "#ff4444");
+          console.error('DB ' + action + ' failed:', err); 
         }
-        await new Promise(r => setTimeout(r, 200 * (attempt + 1))); // backoff
+        await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
       }
+    }
+    if (!success) {
+      queueOfflineOp(table, action, data, matchField);
+      showToast("Saved offline — will sync when connected", "#FFD700");
     }
   }
   saveLocalState();
@@ -654,10 +695,11 @@ async function dbSave(table, action, data, matchField, retries = 2) {
 let session = {
   currentUser: null,
   currentProjectId: null,
-  page: "scanner",     // "projects" | "scanner" | "trays" | "history" | "admin"
+  page: "scanner",
   authView: "login",
   lastScan: null,
   lastAssignment: null,
+  lastDuplicateWarning: null,
 };
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -939,9 +981,11 @@ async function resolveScan(scanId, tray) {
       method: "reconstructed"
     },
     trayId: tray.id,
-    _synthetic: true // flag so we know this was reconstructed
+    _synthetic: true
   };
-  state.scans.push(synth); // cache so subsequent calls find it
+  state.scans.push(synth);
+  // Persist to DB so future edits/moves on this stick work across sessions
+  await dbSave('scans', 'upsert', synth);
   return synth;
 }
 
@@ -1039,8 +1083,7 @@ async function assignTray(projectId, userId, classification) {
         .from('trays')
         .select('*')
         .eq('projectId', projectId)
-        .ilike('partNumber', classification.partNumber)
-        .lt('sticks', project.defaultCap); // rough check
+        .ilike('partNumber', classification.partNumber);
       
       if (data && data.length > 0) {
         // Check if any returned tray is actually open
@@ -1404,7 +1447,7 @@ function renderApp() {
           <button class="${session.page === 'trays' ? 'active' : ''}" onclick="setPage('trays')">Trays</button>
           <button class="${session.page === 'history' ? 'active' : ''}" onclick="setPage('history')">History</button>
           <button class="${session.page === 'master' ? 'active' : ''}" onclick="setPage('master')">Master</button>
-          ${user.role === "admin" ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
+          ${(user.role === "admin" || user.role === "supervisor") ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
         </nav>
         <div style="flex: 1; margin: 0 1.5rem; max-width: 20rem;">
           <input type="text" id="global-search" placeholder="Search Part Number or Tray #..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
@@ -1485,6 +1528,26 @@ function renderScanner() {
           <div style="font-size: 10px; color: #666; margin-top: 10px; letter-spacing: 0.5px;">
             ⌘/Ctrl + Enter to scan · Engine: ${state.engine.toUpperCase()} · Default cap: ${project.defaultCap}
           </div>
+          
+          ${session.lastScan && session.lastScan.projectId == project.id ? (() => {
+            const ls = session.lastScan;
+            const lt = state.trays.find(t => t.id == ls.trayId);
+            const hasDupe = session.lastDuplicateWarning;
+            return `
+            <div style="margin-top: 1rem; background: #15151c; border: 1px solid ${hasDupe ? 'rgba(255,107,138,0.3)' : '#2a2a35'}; border-radius: 0.75rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem;">
+              <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; white-space: nowrap;">LAST</div>
+              <div style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <span class="mono" style="font-size: 0.95rem; font-weight: 800; color: #FFD700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${escapeHtml(ls.result?.partNumber || '?')}</span>
+                <span style="color: #444;">→</span>
+                <span style="font-size: 0.85rem; color: #3ed685; font-weight: 700;">Tray #${lt?.trayNum || '?'}</span>
+                <span style="font-size: 0.75rem; color: #555;">(${lt?.sticks?.length || 0}/${lt?.capacity || '?'})</span>
+                ${ls.result?.serial ? `<span class="mono" style="font-size: 0.75rem; color: #888;">S/N: ${escapeHtml(ls.result.serial)}</span>` : ''}
+              </div>
+              ${hasDupe ? '<span style="font-size: 0.75rem; color: #ff6b8a; font-weight: 700; white-space: nowrap;">⚠ DUP</span>' : ''}
+              <button onclick="undoLastScan()" style="background: transparent; border: 1px solid rgba(255,107,138,0.25); color: #ff6b8a; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 700; border-radius: 0.375rem; cursor: pointer; white-space: nowrap;" title="Remove this scan">↩ Undo</button>
+            </div>`;
+          })() : ''}
+          
         </div>
         <div id="result-card-container"></div>
         
@@ -1622,12 +1685,105 @@ function renderResultCard(r, tray) {
           </div>
         </div>
         <div class="flex gap-12">
-          <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.5rem 1rem; min-height: 2.5rem;" onclick="printTrayLabelById('${tray?.id}')">🖨 Print label</button>
+          <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.5rem 1rem; min-height: 2.5rem; color: #ff6b8a; border-color: rgba(255,107,138,0.3);" onclick="undoLastScan()" title="Remove this stick">↩ Undo</button>
+          <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.5rem 1rem; min-height: 2.5rem;" onclick="printTrayLabelById('${tray?.id}')">🖨 Print</button>
           ${project.mode === "separate" && owner ? `<div style="font-size: 0.9rem; color: #888; align-self: center;">owner: <span style="color: ${owner.color}; font-weight: 700;">${escapeHtml(owner.name)}</span></div>` : ""}
         </div>
       </div>
+      ${session.lastDuplicateWarning ? `
+        <div style="background: rgba(255,107,138,0.08); border: 1px solid rgba(255,107,138,0.2); padding: 0.75rem 1rem; border-radius: 0 0 0.75rem 0.75rem; display: flex; align-items: center; gap: 0.75rem;">
+          <span style="font-size: 1.2rem;">⚠</span>
+          <div style="flex: 1; font-size: 0.85rem; color: #ff6b8a; line-height: 1.4;">
+            <b>Duplicate serial detected!</b> This serial was already scanned in Tray #${session.lastDuplicateWarning.existingTrayNum}.
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
+}
+
+/* ═══ UNDO LAST SCAN ═══ */
+async function undoLastScan() {
+  const lastScan = session.lastScan;
+  if (!lastScan) { showToast("Nothing to undo", "#888"); return; }
+  
+  const tray = state.trays.find(t => t.id == lastScan.trayId);
+  if (!tray) { showToast("Tray not found", "#ff6b8a"); return; }
+  
+  // Remove stick from tray
+  const idx = tray.sticks.indexOf(lastScan.id);
+  if (idx !== -1) {
+    tray.sticks.splice(idx, 1);
+    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+  }
+  
+  // Remove scan record
+  state.scans = state.scans.filter(s => s.id !== lastScan.id);
+  if (useSupabase && sb) {
+    try { await sb.from('scans').delete().eq('id', lastScan.id); } catch (e) {}
+  }
+  
+  // If the tray was just created and is now empty, delete it
+  if (session.lastAssignment?.isNew && tray.sticks.length === 0) {
+    state.trays = state.trays.filter(t => t.id !== tray.id);
+    if (useSupabase && sb) {
+      try { await sb.from('trays').delete().eq('id', tray.id); } catch (e) {}
+    }
+  }
+  
+  saveLocalState();
+  session.lastScan = null;
+  session.lastAssignment = null;
+  session.lastDuplicateWarning = null;
+  showToast("↩ Last scan undone", "#ff6b8a");
+  renderScanner();
+}
+
+/* ═══ DUPLICATE SERIAL DETECTION ═══ */
+function checkDuplicateSerial(serial, projectId, currentScanId) {
+  if (!serial || serial.trim() === '' || serial === '-') return null;
+  const normalizedSerial = serial.trim().toUpperCase();
+  for (const scan of state.scans) {
+    if (scan.id === currentScanId) continue;
+    if (scan.projectId !== projectId) continue;
+    const scanSerial = (scan.result?.serial || '').trim().toUpperCase();
+    if (scanSerial && scanSerial === normalizedSerial) {
+      const tray = state.trays.find(t => t.id == scan.trayId);
+      return { scanId: scan.id, trayId: scan.trayId, trayNum: tray?.trayNum || '?' };
+    }
+  }
+  return null;
+}
+
+/* ═══ PER-USER CSV EXPORT ═══ */
+function exportUserReport(userId) {
+  const user = state.users.find(u => u.id == userId);
+  if (!user) return;
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const userScans = state.scans.filter(s => s.projectId == project.id && s.userId == userId);
+  
+  const headers = ['Timestamp', 'Part Number', 'Serial', 'Brand', 'Generation', 'Tray #', 'Raw Scan'];
+  const rows = userScans.map(s => {
+    const tray = state.trays.find(t => t.id == s.trayId);
+    return [
+      new Date(s.ts).toISOString(),
+      s.result?.partNumber || '',
+      s.result?.serial || '',
+      s.result?.brand || '',
+      s.result?.generation || '',
+      tray?.trayNum || '',
+      s.scan || ''
+    ].map(v => '"' + String(v).replace(/"/g, '""') + '"');
+  });
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = user.name.replace(/\s+/g, '_') + '_scans_' + project.name.replace(/\s+/g, '_') + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Downloaded ' + userScans.length + ' scans for ' + user.name, '#3ed685');
 }
 
 let trayFilter = "all";
@@ -1876,6 +2032,13 @@ async function doScan() {
       session.lastScan = newScan;
       session.lastAssignment = assignment;
       
+      // Check for duplicate serial
+      session.lastDuplicateWarning = null;
+      if (result.serial) {
+        const dupe = checkDuplicateSerial(result.serial, session.currentProjectId, scanId);
+        if (dupe) session.lastDuplicateWarning = { existingTrayNum: dupe.trayNum };
+      }
+      
       renderResultCard(newScan.result, state.trays.find(t => t.id == assignment.tray.id));
       
       if (assignment.status === "NEW") showToast(`✓ NEW PART → Tray #${trayN}`, "#3ed685");
@@ -2082,6 +2245,14 @@ async function doEditStick(trayId, stickIndex) {
         return; 
       }
       
+      // If reassigned to the same tray, no move needed
+      if (assignment.tray.id === tray.id) {
+        hideModal();
+        showToast("Stick updated (same tray)", '#3ed685');
+        renderTraysPage();
+        return;
+      }
+      
       // Remove from current tray
       tray.sticks.splice(stickIndex, 1);
       await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
@@ -2185,18 +2356,29 @@ async function promptMergeTray(sourceTrayId) {
   if (!sourceTray) return;
   
   const project = state.projects.find(p => p.id == sourceTray.projectId);
-  const eligibleTrays = state.trays
+  const allTrays = state.trays
     .filter(t => t.projectId == sourceTray.projectId && t.id != sourceTray.id && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId))
     .sort((a,b) => a.trayNum - b.trayNum);
   
-  const trayOptions = eligibleTrays.map(t => 
-    `<option value="${t.trayNum}">#${t.trayNum} — ${escapeHtml(t.partNumber.slice(0,25))} (${t.sticks.length} sticks)</option>`
-  ).join('');
+  // Split into matching part and other
+  const srcPart = sourceTray.partNumber.toUpperCase();
+  const matchingTrays = allTrays.filter(t => t.partNumber.toUpperCase() === srcPart);
+  const otherTrays = allTrays.filter(t => t.partNumber.toUpperCase() !== srcPart);
+  
+  const makeOption = (t, highlight) => {
+    const full = t.sticks.length >= t.capacity;
+    return `<option value="${t.trayNum}" ${full ? 'disabled' : ''} style="${highlight ? 'color: #3ed685; font-weight: bold;' : ''}">
+      #${t.trayNum} — ${escapeHtml(t.partNumber.slice(0,22))} (${t.sticks.length}/${t.capacity}${full ? ' FULL' : ''})
+    </option>`;
+  };
+  
+  const matchOptions = matchingTrays.map(t => makeOption(t, true)).join('');
+  const otherOptions = otherTrays.map(t => makeOption(t, false)).join('');
   
   showModal(`
     <h2 class="h2" style="color: #FFD700; margin-bottom: 16px;">Merge Tray #${sourceTray.trayNum}</h2>
     <div style="background: #15151c; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border: 1px solid #2a2a35;">
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
         <div>
           <div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Source Part</div>
           <div class="mono" style="color: #FFD700; font-weight: 700; font-size: 0.9rem; word-break: break-all;">${escapeHtml(sourceTray.partNumber)}</div>
@@ -2205,23 +2387,55 @@ async function promptMergeTray(sourceTrayId) {
           <div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Sticks</div>
           <div style="color: #fff; font-weight: 700;">${sourceTray.sticks.length}</div>
         </div>
+        <div>
+          <div style="font-size: 0.7rem; color: #888; text-transform: uppercase;">Brand</div>
+          <div style="color: #ccc;">${sourceTray.brand || 'Unknown'}</div>
+        </div>
       </div>
     </div>
+    
+    ${matchingTrays.length > 0 ? `
+      <div style="font-size: 0.75rem; color: #3ed685; text-transform: uppercase; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: 0.05em;">✓ Matching Part Trays (${matchingTrays.length})</div>
+      <div style="display: grid; gap: 0.5rem; margin-bottom: 1.25rem; max-height: 180px; overflow-y: auto;">
+        ${matchingTrays.map(t => {
+          const full = t.sticks.length >= t.capacity;
+          const canFit = t.capacity - t.sticks.length;
+          const willOverflow = sourceTray.sticks.length > canFit;
+          return `
+          <button onclick="${full ? '' : `document.getElementById('merge-target-num').value='${t.trayNum}'`}" 
+            style="text-align: left; border: 1px solid ${full ? '#2a2a35' : '#3ed685'}; background: ${full ? '#15151c' : 'rgba(62,214,133,0.05)'}; border-radius: 0.625rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; ${full ? 'opacity: 0.5; cursor: not-allowed;' : 'cursor: pointer;'}">
+            <div style="font-size: 1.1rem; font-weight: 800; color: #3ed685; min-width: 3rem; font-family: monospace;">#${t.trayNum}</div>
+            <div style="flex: 1;">
+              <div style="font-size: 0.85rem; color: #fff; font-weight: 600;">${t.sticks.length}/${t.capacity} sticks</div>
+              <div style="font-size: 0.7rem; color: ${full ? '#ff6b8a' : willOverflow ? '#FFD700' : '#888'};">
+                ${full ? 'FULL — cannot merge here' : willOverflow ? `Room for ${canFit} — ${sourceTray.sticks.length - canFit} will need another tray` : `Room for ${canFit} — all sticks fit`}
+              </div>
+            </div>
+            ${!full ? '<span style="color: #3ed685; font-size: 1rem;">→</span>' : ''}
+          </button>`;
+        }).join('')}
+      </div>
+    ` : `
+      <div style="background: rgba(255,215,0,0.05); border: 1px solid rgba(255,215,0,0.15); border-radius: 0.625rem; padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: #FFD700;">
+        No other trays with part <b>${escapeHtml(sourceTray.partNumber)}</b> found in this project.
+      </div>
+    `}
+    
     <div class="field">
-      <div class="label">Merge into tray number</div>
-      <input type="number" id="merge-target-num" min="1" placeholder="Enter target tray #" />
+      <div class="label">Target tray number</div>
+      <input type="number" id="merge-target-num" min="1" placeholder="Enter or click a tray above" />
     </div>
-    ${eligibleTrays.length > 0 ? `
+    ${otherTrays.length > 0 ? `
       <div class="field">
-        <div class="label">Or select existing tray</div>
-        <select id="merge-target-select" onchange="document.getElementById('merge-target-num').value = this.value">
-          <option value="">— Select a tray —</option>
-          ${trayOptions}
+        <div class="label" style="color: #888;">Or pick from other trays (different part)</div>
+        <select id="merge-target-select" onchange="document.getElementById('merge-target-num').value = this.value" style="width: 100%;">
+          <option value="">— Other trays —</option>
+          ${otherOptions}
         </select>
       </div>
     ` : ''}
     <div style="font-size: 0.85rem; color: #ff6b8a; margin-bottom: 1rem; line-height: 1.5;">
-      ⚠ All sticks from Tray #${sourceTray.trayNum} will be moved to the target tray. The source tray will be <b>deleted</b>.
+      ⚠ All sticks from Tray #${sourceTray.trayNum} will be moved to the target. Source tray will be <b>deleted</b>.
     </div>
     <div id="merge-msg"></div>
     <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
@@ -2294,7 +2508,7 @@ async function moveStick(trayId, stickIndex) {
   
   const project = state.projects.find(p => p.id == session.currentProjectId);
   const projectTrays = state.trays
-    .filter(t => t.projectId == project.id && t.id != tray.id)
+    .filter(t => t.projectId == project.id && t.id != tray.id && t.partNumber.toUpperCase() === (scan.result?.partNumber || "").toUpperCase())
     .sort((a,b) => a.trayNum - b.trayNum);
   
   const trayOptions = projectTrays.map(t => {
@@ -2317,15 +2531,15 @@ async function moveStick(trayId, stickIndex) {
         <input type="number" id="move-stick-tray" min="1" placeholder="Enter tray #" style="flex: 1;" />
       </div>
     </div>
-    ${projectTrays.length > 0 ? `
-      <div class="field">
-        <div class="label">Or select existing tray</div>
-        <select id="move-stick-select" onchange="document.getElementById('move-stick-tray').value = this.value" style="width: 100%;">
-          <option value="">— Select a tray —</option>
-          ${trayOptions}
-        </select>
-      </div>
-    ` : ''}
+    <div class="field">
+      <div class="label">Or select existing tray</div>
+      <select id="move-stick-select" onchange="document.getElementById('move-stick-tray').value = this.value" style="width: 100%;">
+        ${projectTrays.length > 0 
+          ? `<option value="">— Select a tray —</option>${trayOptions}` 
+          : `<option value="" disabled>No other trays with this part found</option>`
+        }
+      </select>
+    </div>
     <div id="move-stick-msg"></div>
     <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
       <button class="btn-ghost" onclick="hideModal()">Cancel</button>
@@ -2366,6 +2580,19 @@ async function doMoveStick(trayId, stickIndex) {
       if (targetTray.sticks.length >= targetTray.capacity) {
         if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Target tray is full</div>';
         return;
+      }
+      // Warn if different part number
+      const stickPart = (scan.result?.partNumber || "").toUpperCase();
+      const trayPart = (targetTray.partNumber || "").toUpperCase();
+      if (stickPart && trayPart && stickPart !== trayPart) {
+        if (msgEl && !msgEl.dataset.confirmed) {
+          msgEl.innerHTML = `<div style="background: rgba(255,215,0,0.1); border: 1px solid rgba(255,215,0,0.3); border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.5rem;">
+            <div style="color: #FFD700; font-weight: 700; font-size: 0.85rem; margin-bottom: 0.25rem;">⚠ Part number mismatch</div>
+            <div style="color: #ccc; font-size: 0.8rem;">Stick: <b>${escapeHtml(stickPart)}</b> → Tray: <b>${escapeHtml(trayPart)}</b></div>
+            <button onclick="document.getElementById('move-stick-msg').dataset.confirmed='1'; doMoveStick('${trayId}', ${stickIndex});" class="btn" style="margin-top: 0.5rem; font-size: 0.8rem; padding: 0.35rem 1rem; background: #FFD700; color: #0a0a0f;">Move Anyway</button>
+          </div>`;
+          return;
+        }
       }
       // Refresh target tray sticks from DB
       if (useSupabase && sb) {
@@ -2668,61 +2895,411 @@ function exportMasterCSV() {
   showToast('Master CSV downloaded!', '#3ed685');
 }
 
+let adminTab = "overview";
+function setAdminTab(t) { adminTab = t; renderAdminPage(); }
+
 function renderAdminPage() {
   const project = state.projects.find(p => p.id == session.currentProjectId);
   const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  const projectScans = state.scans.filter(s => s.projectId == project.id);
+  
+  // Per-user stats
+  const userStats = {};
+  projectScans.forEach(s => {
+    if (!userStats[s.userId]) userStats[s.userId] = { count: 0, latest: 0 };
+    userStats[s.userId].count++;
+    if (s.ts > userStats[s.userId].latest) userStats[s.userId].latest = s.ts;
+  });
+  
+  // Brand breakdown
+  const brandCounts = {};
+  projectTrays.forEach(t => {
+    const b = t.brand || "Unknown";
+    if (!brandCounts[b]) brandCounts[b] = { trays: 0, sticks: 0 };
+    brandCounts[b].trays++;
+    brandCounts[b].sticks += t.sticks?.length || 0;
+  });
+  
+  const tabs = [
+    { id: "overview", label: "Overview", icon: "📊" },
+    { id: "users", label: "Users", icon: "👤" },
+    { id: "members", label: "Members", icon: "🔗" },
+    { id: "import", label: "Import", icon: "📄" },
+    { id: "danger", label: "Danger", icon: "⚠" },
+  ];
+
   document.getElementById("page-content").innerHTML = `
-    <h1 class="h">Admin · ${escapeHtml(project.name)}</h1>
+    <h1 class="h" style="margin-bottom: 0.5rem;">Admin · ${escapeHtml(project.name)}</h1>
+    
+    <div style="display: flex; gap: 0; margin-bottom: 2rem; border-bottom: 2px solid #1a1a22; overflow-x: auto;">
+      ${tabs.map(t => `
+        <button onclick="setAdminTab('${t.id}')" style="
+          padding: 0.75rem 1.25rem; border: 0; background: transparent;
+          color: ${adminTab === t.id ? '#FFD700' : '#666'}; font-weight: 700; font-size: 0.85rem;
+          border-bottom: 2px solid ${adminTab === t.id ? '#FFD700' : 'transparent'};
+          margin-bottom: -2px; white-space: nowrap; transition: all 0.15s;
+        ">${t.icon} ${t.label}</button>
+      `).join('')}
+    </div>
+    
+    <div id="admin-tab-content"></div>
+  `;
+  
+  const container = document.getElementById("admin-tab-content");
+  if (adminTab === "overview") renderAdminOverview(container, project, projectTrays, projectScans, userStats, brandCounts);
+  else if (adminTab === "users") renderAdminUsers(container);
+  else if (adminTab === "members") renderAdminMembers(container, project);
+  else if (adminTab === "import") renderAdminImport(container);
+  else if (adminTab === "danger") renderAdminDanger(container, project);
+}
+
+function renderAdminOverview(el, project, trays, scans, userStats, brandCounts) {
+  const activeTrays = trays.filter(t => t.sticks.length < t.capacity);
+  const fullTrays = trays.filter(t => t.sticks.length >= t.capacity);
+  const totalSticks = getProjectStickCount(project.id);
+  
+  // Recent activity (last 20 scans)
+  const recent = scans.slice(0, 15);
+  
+  el.innerHTML = `
     <div class="stats" style="margin-bottom: 2rem;">
       <div class="stat" style="border-top: 4px solid #3ed685;">
-        <div class="stat-label">Total sticks</div>
-        <div class="stat-value" style="color: #3ed685;">${getProjectStickCount(project.id)}</div>
+        <div class="stat-label">Total Sticks</div>
+        <div class="stat-value" style="color: #3ed685;">${totalSticks}</div>
       </div>
       <div class="stat" style="border-top: 4px solid #4fa3ff;">
-        <div class="stat-label">Active trays</div>
-        <div class="stat-value" style="color: #4fa3ff;">${projectTrays.filter(t => t.sticks.length < t.capacity).length}</div>
+        <div class="stat-label">Active Trays</div>
+        <div class="stat-value" style="color: #4fa3ff;">${activeTrays.length}</div>
       </div>
       <div class="stat" style="border-top: 4px solid #ff6b8a;">
-        <div class="stat-label">Full trays</div>
-        <div class="stat-value" style="color: #ff6b8a;">${projectTrays.filter(t => t.sticks.length >= t.capacity).length}</div>
+        <div class="stat-label">Full Trays</div>
+        <div class="stat-value" style="color: #ff6b8a;">${fullTrays.length}</div>
       </div>
       <div class="stat" style="border-top: 4px solid #FFD700;">
         <div class="stat-label">Members</div>
         <div class="stat-value" style="color: #FFD700;">${project.memberIds.length}</div>
       </div>
     </div>
-    <h2 class="h2" style="margin-bottom: 1rem;">Project members</h2>
-    <div class="card card-tight" style="margin-bottom: 2rem;">
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.75rem;">
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+      <div class="card card-tight">
+        <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 1rem; letter-spacing: 0.05em;">Scanner Leaderboard</div>
+        ${Object.entries(userStats).sort((a,b) => b[1].count - a[1].count).map(([uid, stats], rank) => {
+          const u = state.users.find(u => u.id == uid);
+          if (!u) return '';
+          const medal = rank === 0 ? '🥇' : rank === 1 ? '🥈' : rank === 2 ? '🥉' : '';
+          return `
+            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0; border-bottom: 1px solid #1a1a22;">
+              <span style="font-size: 1rem; min-width: 1.5rem;">${medal || `<span style='color:#555;font-size:0.8rem;'>${rank+1}</span>`}</span>
+              <div class="avatar avatar-sm" style="background: ${u.color}; flex-shrink: 0;">${u.name.charAt(0).toUpperCase()}</div>
+              <div style="flex: 1;">
+                <div style="font-size: 0.9rem; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
+                <div style="font-size: 0.7rem; color: #666;">${new Date(stats.latest).toLocaleDateString()}</div>
+              </div>
+              <div style="font-size: 1.1rem; font-weight: 800; color: #FFD700; font-family: monospace;">${stats.count}</div>
+              <button onclick="exportUserReport('${uid}')" style="background: transparent; border: 1px solid #2a2a35; color: #888; font-size: 0.65rem; padding: 0.25rem 0.5rem; border-radius: 0.25rem; cursor: pointer;" title="Download CSV">📥</button>
+            </div>`;
+        }).join('')}
+        ${Object.keys(userStats).length === 0 ? '<div style="color: #555; padding: 1rem; text-align: center;">No scan activity yet</div>' : ''}
+      </div>
+      
+      <div class="card card-tight">
+        <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 1rem; letter-spacing: 0.05em;">Brand Distribution</div>
+        ${Object.entries(brandCounts).sort((a,b) => b[1].sticks - a[1].sticks).map(([brand, data]) => {
+          const bm = BRAND_META[brand] || BRAND_META.Unknown;
+          const pct = totalSticks > 0 ? Math.round((data.sticks / totalSticks) * 100) : 0;
+          return `
+            <div style="margin-bottom: 0.75rem;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                <span style="font-size: 0.85rem; font-weight: 600; color: ${bm.hex};">${brand}</span>
+                <span style="font-size: 0.8rem; color: #888;">${data.sticks} sticks · ${data.trays} trays · ${pct}%</span>
+              </div>
+              <div style="height: 6px; background: #1a1a22; border-radius: 3px; overflow: hidden;">
+                <div style="height: 100%; width: ${pct}%; background: ${bm.hex}; border-radius: 3px; transition: width 0.3s;"></div>
+              </div>
+            </div>`;
+        }).join('')}
+        ${Object.keys(brandCounts).length === 0 ? '<div style="color: #555; padding: 1rem; text-align: center;">No tray data yet</div>' : ''}
+      </div>
+    </div>
+    
+    <div class="card card-tight">
+      <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 1rem; letter-spacing: 0.05em;">Recent Activity</div>
+      <div style="max-height: 300px; overflow-y: auto;">
+        ${recent.length === 0 ? '<div style="color: #555; padding: 1rem; text-align: center;">No recent scans</div>' : recent.map(s => {
+          const u = state.users.find(u => u.id == s.userId);
+          const t = state.trays.find(t => t.id == s.trayId);
+          const age = Date.now() - s.ts;
+          const timeAgo = age < 60000 ? 'just now' : age < 3600000 ? Math.round(age/60000) + 'm ago' : age < 86400000 ? Math.round(age/3600000) + 'h ago' : Math.round(age/86400000) + 'd ago';
+          return `
+            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #15151c;">
+              <div class="avatar avatar-sm" style="background: ${u?.color || '#333'}; flex-shrink: 0; width: 1.75rem; height: 1.75rem; font-size: 0.65rem;">${(u?.name || '?').charAt(0)}</div>
+              <div style="flex: 1; min-width: 0;">
+                <span style="font-size: 0.85rem; color: #FFD700; font-weight: 700; font-family: monospace;">${escapeHtml(s.result?.partNumber || '?')}</span>
+                <span style="color: #444; margin: 0 4px;">→</span>
+                <span style="font-size: 0.8rem; color: #4fa3ff;">Tray #${t?.trayNum || '?'}</span>
+              </div>
+              <span style="font-size: 0.7rem; color: #555; white-space: nowrap;">${timeAgo}</span>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminUsers(el) {
+  const currentUser = session.currentUser;
+  const roleColors = { admin: '#FFD700', supervisor: '#4fa3ff', scanner: '#3ed685' };
+  const roleLabels = { admin: 'Admin', supervisor: 'Supervisor', scanner: 'Scanner' };
+  
+  el.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+      <div>
+        <h2 class="h2" style="margin-bottom: 0.25rem;">User Management</h2>
+        <div style="font-size: 0.85rem; color: #666;">${state.users.length} registered users</div>
+      </div>
+      <button class="btn" onclick="openAddUserModal()" style="font-size: 0.85rem;">+ Add User</button>
+    </div>
+    
+    <div style="display: grid; gap: 0.75rem;">
+      ${state.users.map(u => {
+        const isMe = u.id === currentUser.id;
+        const rc = roleColors[u.role] || '#888';
+        return `
+        <div class="card card-tight" style="display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 1rem; padding: 1rem 1.25rem; border-left: 3px solid ${rc};">
+          <div class="avatar" style="background: ${u.color}; width: 2.75rem; height: 2.75rem; font-size: 1.1rem;">${u.name.charAt(0).toUpperCase()}</div>
+          <div>
+            <div style="font-size: 1rem; font-weight: 700; color: #fff;">
+              ${escapeHtml(u.name)} ${isMe ? '<span style="font-size: 0.7rem; color: #FFD700; background: rgba(255,215,0,0.12); padding: 2px 8px; border-radius: 4px; margin-left: 6px;">YOU</span>' : ''}
+            </div>
+            <div style="font-size: 0.8rem; color: #666; margin-top: 2px;">
+              @${escapeHtml(u.username)}
+            </div>
+          </div>
+          <div>
+            <select onchange="changeUserRole('${u.id}', this.value)" ${isMe ? 'disabled' : ''} style="
+              background: rgba(${u.role === 'admin' ? '255,215,0' : u.role === 'supervisor' ? '79,163,255' : '62,214,133'},0.1);
+              color: ${rc}; border: 1px solid ${rc}; border-radius: 0.5rem;
+              padding: 0.4rem 0.75rem; font-size: 0.8rem; font-weight: 700;
+              ${isMe ? 'opacity: 0.5; cursor: not-allowed;' : 'cursor: pointer;'}
+            ">
+              <option value="scanner" ${u.role === 'scanner' ? 'selected' : ''}>Scanner</option>
+              <option value="supervisor" ${u.role === 'supervisor' ? 'selected' : ''}>Supervisor</option>
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn-ghost" onclick="openEditUserModal('${u.id}')" style="font-size: 0.75rem; padding: 0.4rem 0.75rem; min-height: 2rem;">Edit</button>
+            ${!isMe ? `<button class="btn-ghost" onclick="confirmDeleteUser('${u.id}')" style="font-size: 0.75rem; padding: 0.4rem 0.75rem; min-height: 2rem; color: #ff6b8a; border-color: rgba(255,107,138,0.3);">Remove</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    
+    <div class="card card-tight" style="margin-top: 1.5rem; border: 1px dashed #2a2a35;">
+      <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 0.75rem;">Role Permissions</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; font-size: 0.8rem;">
+        <div>
+          <div style="color: #3ed685; font-weight: 700; margin-bottom: 0.25rem;">Scanner</div>
+          <div style="color: #666; line-height: 1.5;">Scan sticks, view trays, view history</div>
+        </div>
+        <div>
+          <div style="color: #4fa3ff; font-weight: 700; margin-bottom: 0.25rem;">Supervisor</div>
+          <div style="color: #666; line-height: 1.5;">All Scanner perms + edit/move/delete sticks, merge trays, view master</div>
+        </div>
+        <div>
+          <div style="color: #FFD700; font-weight: 700; margin-bottom: 0.25rem;">Admin</div>
+          <div style="color: #666; line-height: 1.5;">Full access: manage users, projects, CSV import, clear data</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminMembers(el, project) {
+  el.innerHTML = `
+    <h2 class="h2" style="margin-bottom: 0.25rem;">Project Members</h2>
+    <div style="font-size: 0.85rem; color: #666; margin-bottom: 1.5rem;">Toggle users on/off to control who can access <b style="color:#FFD700;">${escapeHtml(project.name)}</b></div>
+    <div class="card card-tight">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem;">
         ${state.users.filter(u => u.role !== "admin").map(u => {
           const sel = project.memberIds.includes(u.id);
+          const scanCount = state.scans.filter(s => s.projectId == project.id && s.userId == u.id).length;
           return `
             <button onclick="toggleProjectMember('${project.id}','${u.id}')" 
-              style="text-align: left; border: ${sel ? '2px solid ' + u.color : '2px solid #2a2a35'}; background: ${sel ? '#15151c' : 'transparent'}; border-radius: 0.75rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; min-height: 3.5rem;">
-              <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
-              <div style="flex: 1; font-size: 0.95rem; font-weight: 600; color: #fff;">${escapeHtml(u.name)}</div>
-              ${sel ? `<span style="color: ${u.color}; font-weight: 700;">✓</span>` : ""}
+              style="text-align: left; border: ${sel ? '2px solid ' + u.color : '2px solid #2a2a35'}; background: ${sel ? 'rgba(255,255,255,0.03)' : 'transparent'}; border-radius: 0.75rem; padding: 0.875rem 1rem; display: flex; align-items: center; gap: 0.75rem; min-height: 3.75rem; transition: all 0.15s;">
+              <div class="avatar avatar-sm" style="background: ${u.color}; opacity: ${sel ? '1' : '0.4'};">${u.name.charAt(0).toUpperCase()}</div>
+              <div style="flex: 1;">
+                <div style="font-size: 0.95rem; font-weight: 600; color: ${sel ? '#fff' : '#555'};">${escapeHtml(u.name)}</div>
+                <div style="font-size: 0.7rem; color: ${sel ? '#888' : '#444'};">${u.role} · ${scanCount} scans</div>
+              </div>
+              ${sel ? `<span style="color: ${u.color}; font-weight: 700; font-size: 1.1rem;">✓</span>` : `<span style="color: #333; font-size: 0.8rem;">OFF</span>`}
             </button>
           `;
         }).join("")}
       </div>
     </div>
-    <div style="margin-top: 2rem;">
-       <h2 class="h2" style="margin-bottom: 1rem;">CSV Import</h2>
-       <div class="card">
-         <div style="font-size: 0.9rem; color: #888; margin-bottom: 1rem;">Bulk upload sticks to this project.</div>
-         <input type="file" id="csv-upload" accept=".csv" style="display:none" onchange="handleCSVImport()">
-         <button class="btn" onclick="document.getElementById('csv-upload').click()">Upload CSV File</button>
-       </div>
-    </div>
-    <div style="margin-top: 2rem;">
-      <h2 class="h2" style="margin-bottom: 1rem; color: #ff6b8a;">Danger zone</h2>
-      <div class="card card-tight">
-        <button class="btn-ghost" onclick="if(confirm('Clear all scans/trays for THIS project?')){clearProjectData();}" style="border-color: #ffaa00; color: #ffaa00; width: 100%; min-height: 3rem; margin-bottom: 0.75rem;">Clear Project Data</button>
-        <button class="btn-ghost" onclick="promptDeleteProject(session.currentProjectId, 'current project')" style="border-color: #ff6b8a; color: #ff6b8a; width: 100%; min-height: 3rem;">Delete Entire Project</button>
-      </div>
+  `;
+}
+
+function renderAdminImport(el) {
+  el.innerHTML = `
+    <h2 class="h2" style="margin-bottom: 1rem;">CSV Import</h2>
+    <div class="card">
+      <div style="font-size: 0.9rem; color: #888; margin-bottom: 1rem;">Bulk upload sticks to this project.</div>
+      <input type="file" id="csv-upload" accept=".csv" style="display:none" onchange="handleCSVImport()">
+      <button class="btn" onclick="document.getElementById('csv-upload').click()">Upload CSV File</button>
     </div>
   `;
+}
+
+function renderAdminDanger(el, project) {
+  el.innerHTML = `
+    <h2 class="h2" style="margin-bottom: 1rem; color: #ff6b8a;">Danger Zone</h2>
+    <div class="card card-tight">
+      <button class="btn-ghost" onclick="if(confirm('Clear all scans/trays for THIS project?')){clearProjectData();}" style="border-color: #ffaa00; color: #ffaa00; width: 100%; min-height: 3rem; margin-bottom: 0.75rem;">Clear Project Data</button>
+      <button class="btn-ghost" onclick="promptDeleteProject(session.currentProjectId, '${escapeHtml(project.name)}')" style="border-color: #ff6b8a; color: #ff6b8a; width: 100%; min-height: 3rem; margin-bottom: 0.75rem;">Delete Entire Project</button>
+      <button class="btn-ghost" onclick="promptResetAllData()" style="border-color: #ff4444; color: #ff4444; width: 100%; min-height: 3rem;">Reset All System Data</button>
+    </div>
+  `;
+}
+
+/* ═══ User management modals ═══ */
+function openAddUserModal() {
+  showModal(`
+    <h2 class="h2" style="color: #3ed685; margin-bottom: 16px;">Add New User</h2>
+    <div class="field">
+      <div class="label">Username</div>
+      <input type="text" id="new-user-username" placeholder="e.g. jsmith" />
+    </div>
+    <div class="field">
+      <div class="label">Display Name</div>
+      <input type="text" id="new-user-name" placeholder="e.g. John Smith" />
+    </div>
+    <div class="field">
+      <div class="label">Password</div>
+      <input type="password" id="new-user-pass" placeholder="Min 4 characters" />
+    </div>
+    <div class="field">
+      <div class="label">Role</div>
+      <select id="new-user-role">
+        <option value="scanner">Scanner</option>
+        <option value="supervisor">Supervisor</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <div id="add-user-msg"></div>
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doAddUser()">Create User</button>
+    </div>
+  `);
+}
+
+async function doAddUser() {
+  const username = document.getElementById("new-user-username")?.value.trim();
+  const name = document.getElementById("new-user-name")?.value.trim() || username;
+  const pass = document.getElementById("new-user-pass")?.value;
+  const role = document.getElementById("new-user-role")?.value || "scanner";
+  const msgEl = document.getElementById("add-user-msg");
+  
+  if (!username) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Username required</div>'; return; }
+  if (!pass || pass.length < 4) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Password must be at least 4 chars</div>'; return; }
+  if (state.users.find(u => u.username === username)) { if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Username already exists</div>'; return; }
+  
+  const hue = Math.floor(Math.random() * 360);
+  const newUser = {
+    id: generateId('u'), username, password: pass, role, name,
+    color: 'hsl(' + hue + ', 70%, 50%)',
+  };
+  state.users.push(newUser);
+  await dbSave('users', 'insert', newUser);
+  hideModal();
+  showToast('User "' + name + '" created', '#3ed685');
+  renderAdminPage();
+}
+
+function openEditUserModal(userId) {
+  const u = state.users.find(x => x.id == userId);
+  if (!u) return;
+  const colorVal = u.color.startsWith('hsl') ? '#4fa3ff' : u.color;
+  showModal(`
+    <h2 class="h2" style="color: #4fa3ff; margin-bottom: 16px;">Edit User · ${escapeHtml(u.name)}</h2>
+    <div class="field">
+      <div class="label">Display Name</div>
+      <input type="text" id="edit-user-name" value="${escapeHtml(u.name)}" />
+    </div>
+    <div class="field">
+      <div class="label">New Password (leave blank to keep current)</div>
+      <input type="password" id="edit-user-pass" placeholder="Enter new password..." />
+    </div>
+    <div class="field">
+      <div class="label">Avatar Color</div>
+      <input type="color" id="edit-user-color" value="${colorVal}" style="width: 100%; height: 2.5rem; border: 1px solid #2a2a35; border-radius: 0.5rem; background: #1a1a22; cursor: pointer;" />
+    </div>
+    <div id="edit-user-msg"></div>
+    <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" onclick="doEditUser('${u.id}')">Save Changes</button>
+    </div>
+  `);
+}
+
+async function doEditUser(userId) {
+  const u = state.users.find(x => x.id == userId);
+  if (!u) return;
+  const name = document.getElementById("edit-user-name")?.value.trim();
+  const pass = document.getElementById("edit-user-pass")?.value;
+  const color = document.getElementById("edit-user-color")?.value;
+  
+  if (name) u.name = name;
+  if (pass && pass.length >= 4) u.password = pass;
+  if (color) u.color = color;
+  
+  await dbSave('users', 'update', { updates: { name: u.name, password: u.password, color: u.color }, id: u.id }, 'id');
+  hideModal();
+  showToast('User "' + u.name + '" updated', '#3ed685');
+  renderAdminPage();
+}
+
+async function changeUserRole(userId, newRole) {
+  const u = state.users.find(x => x.id == userId);
+  if (!u) return;
+  u.role = newRole;
+  await dbSave('users', 'update', { updates: { role: newRole }, id: u.id }, 'id');
+  showToast(u.name + ' is now ' + newRole, '#4fa3ff');
+  renderAdminPage();
+}
+
+function confirmDeleteUser(userId) {
+  const u = state.users.find(x => x.id == userId);
+  if (!u) return;
+  showModal(`
+    <h2 class="h2" style="color: #ff6b8a; margin-bottom: 12px;">Remove User?</h2>
+    <div style="font-size: 0.95rem; color: #e8e8ee; margin-bottom: 1.5rem; line-height: 1.6;">
+      Remove <b style="color: #FFD700;">${escapeHtml(u.name)}</b> (@${escapeHtml(u.username)}) from the system?<br>
+      <span style="color: #888; font-size: 0.85rem;">Their scan history will be preserved but they won't be able to log in.</span>
+    </div>
+    <div class="flex gap-12" style="justify-content: flex-end;">
+      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+      <button class="btn" style="background: #ff6b8a; color: #fff;" onclick="doDeleteUser('${u.id}')">Remove User</button>
+    </div>
+  `);
+}
+
+async function doDeleteUser(userId) {
+  state.users = state.users.filter(u => u.id != userId);
+  state.projects.forEach(p => {
+    p.memberIds = p.memberIds.filter(id => id != userId);
+    dbSave('projects', 'update', { updates: { memberIds: p.memberIds }, id: p.id }, 'id');
+  });
+  if (useSupabase && sb) {
+    try { await sb.from('users').delete().eq('id', userId); } catch (e) {}
+  }
+  saveLocalState();
+  hideModal();
+  showToast('User removed', '#ff6b8a');
+  renderAdminPage();
 }
 
 async function toggleProjectMember(projectId, userId) {
@@ -2816,14 +3393,13 @@ async function handleCSVImport() {
   const headers = parseLine(lines[0]);
   const normHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
   
-  // Auto-detect indices
   const idxPart = normHeaders.findIndex(h => h.includes('part'));
   const idxTray = normHeaders.findIndex(h => h === 'tray' || h === 'traynumber');
   const idxBrand = normHeaders.findIndex(h => h.includes('brand'));
   const idxGen = normHeaders.findIndex(h => h.includes('gen'));
   const idxSerial = normHeaders.findIndex(h => h.includes('serial'));
-  const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
   const idxQty = normHeaders.findIndex(h => h.includes('qty') || h.includes('quantity'));
+  const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
   
   const firstRow = lines.length > 1 ? parseLine(lines[1]) : [];
   
@@ -2833,45 +3409,58 @@ async function handleCSVImport() {
   };
   
   const modalHTML = `
-    <h2 class="h2" style="margin-bottom: 1rem;">Map CSV Columns</h2>
-    <div style="font-size: 0.9rem; color: #888; margin-bottom: 1.5rem;">
-      Please assign your CSV columns to the system fields.
+    <h2 class="h2" style="margin-bottom: 0.5rem;">Map CSV Columns</h2>
+    <div style="font-size: 0.85rem; color: #888; margin-bottom: 1.5rem;">
+      Assign your CSV columns to system fields. <br>
+      <i style="color: #FFD700;">Note: For a "Clean Slate", use <b>Admin > Clear Project Data</b> before importing.</i>
     </div>
     
-    <div style="display: grid; gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="field" style="margin-bottom: 1.5rem;">
+      <div class="label" style="color: #3ed685; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Import Method</div>
+      <select id="import-method" style="width: 100%; min-height: 2.75rem; background: #15151c; color: #fff; border: 1px solid #3ed685; border-radius: 0.5rem; padding: 0 0.75rem; font-weight: 700;">
+        <option value="sync">Update Existing (Smart Sync - Prevents doubling)</option>
+        <option value="append">Add New (Simple Append - Adds everything as new)</option>
+      </select>
+    </div>
+
+    <div style="display: grid; gap: 0.75rem; margin-bottom: 1.5rem;">
       <div>
-        <div class="label" style="color: #FFD700; font-size: 0.8rem; margin-bottom: 0.25rem;">Part Number * (Required)</div>
-        <select id="map-part" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxPart)}</select>
+        <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Part Number *</div>
+        <select id="map-part" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxPart)}</select>
       </div>
       <div>
-        <div class="label" style="color: #FFD700; font-size: 0.8rem; margin-bottom: 0.25rem;">Tray Number * (Required)</div>
-        <select id="map-tray" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxTray)}</select>
+        <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Tray Number *</div>
+        <select id="map-tray" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxTray)}</select>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+        <div>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Brand</div>
+          <select id="map-brand" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxBrand)}</select>
+        </div>
+        <div>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Generation</div>
+          <select id="map-gen" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxGen)}</select>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+        <div>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Serial Number</div>
+          <select id="map-serial" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxSerial)}</select>
+        </div>
+        <div>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Quantity</div>
+          <select id="map-qty" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxQty)}</select>
+        </div>
       </div>
       <div>
-        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Brand</div>
-        <select id="map-brand" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxBrand)}</select>
-      </div>
-      <div>
-        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Generation (e.g. DDR4)</div>
-        <select id="map-gen" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxGen)}</select>
-      </div>
-      <div>
-        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Serial Number</div>
-        <select id="map-serial" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxSerial)}</select>
-      </div>
-      <div>
-        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Quantity</div>
-        <select id="map-qty" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxQty)}</select>
-      </div>
-      <div>
-        <div class="label" style="font-size: 0.8rem; margin-bottom: 0.25rem;">QR Scan Input (Raw string)</div>
-        <select id="map-scan" style="width: 100%; min-height: 2.5rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxScan)}</select>
+        <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">QR Scan Input (Raw string)</div>
+        <select id="map-scan" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxScan)}</select>
       </div>
     </div>
     
-    <div class="flex items-center justify-between" style="margin-top: 1.5rem;">
+    <div class="flex items-center justify-between" style="margin-top: 1rem;">
       <button class="btn-ghost" onclick="hideModal()">Cancel</button>
-      <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Scans</button>
+      <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Rows</button>
     </div>
   `;
   
@@ -2885,13 +3474,14 @@ async function executeCSVImport() {
   const parseLine = window._pendingCSVImportParseLine;
   if (!lines || !parseLine) return;
   
+  const method = document.getElementById("import-method")?.value || "sync";
   const idxPart = parseInt(document.getElementById("map-part").value, 10);
   const idxTray = parseInt(document.getElementById("map-tray").value, 10);
   const idxBrand = parseInt(document.getElementById("map-brand").value, 10);
   const idxGen = parseInt(document.getElementById("map-gen").value, 10);
   const idxSerial = parseInt(document.getElementById("map-serial").value, 10);
-  const idxScan = parseInt(document.getElementById("map-scan").value, 10);
   const idxQty = parseInt(document.getElementById("map-qty").value, 10);
+  const idxScan = parseInt(document.getElementById("map-scan")?.value || "-1", 10);
   
   if (idxPart === -1 || idxTray === -1) {
     showToast("Part Number and Tray columns are required.", "#ff6b8a");
@@ -2899,84 +3489,122 @@ async function executeCSVImport() {
   }
   
   hideModal();
-  document.getElementById("page-content").innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 4rem;"><div style="color: #FFD700; font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">Importing CSV data...</div><div style="color: #888;">Please wait.</div></div>`;
+  document.getElementById("page-content").innerHTML = `
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 4rem;">
+      <div id="import-progress" style="color: #FFD700; font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">${method==='sync'?'Syncing':'Importing'} CSV Data...</div>
+      <div id="import-stats" style="color: #888;">Processing rows...</div>
+    </div>`;
   
   await new Promise(r => setTimeout(r, 50));
   
-  let success = 0;
+  let totalAdded = 0;
   let skipped = 0;
   const project = state.projects.find(p => p.id == session.currentProjectId);
-  let maxTrayNum = state.trayCounters[project.id] || 0;
-  
+  const progressEl = document.getElementById("import-progress");
+  const statsEl = document.getElementById("import-stats");
+  window.isBulkScanning = true;
+
   for (let i = 1; i < lines.length; i++) {
+    if (i % 15 === 0) {
+      progressEl.textContent = `Processing row ${i} of ${lines.length - 1}...`;
+      statsEl.textContent = `${totalAdded} sticks added, ${skipped} skipped`;
+      await new Promise(r => setTimeout(r, 5)); 
+    }
+
     const cols = parseLine(lines[i]);
-    if (cols.length <= idxPart || cols.length <= idxTray) continue;
+    if (cols.length <= idxPart || cols.length <= idxTray) { skipped++; continue; }
     
-    const partNum = cols[idxPart];
+    const partNum = cols[idxPart]?.trim().toUpperCase();
     if (!partNum || partNum === '#VALUE!') { skipped++; continue; }
     
-    const trayNumRaw = parseInt(cols[idxTray], 10);
-    if (isNaN(trayNumRaw)) { skipped++; continue; }
-    maxTrayNum = Math.max(maxTrayNum, trayNumRaw);
-    
-    const brand = idxBrand >= 0 ? cols[idxBrand] : "Unknown";
-    const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen] : "Unknown";
-    const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial] : "";
-    const scanRaw = idxScan >= 0 ? cols[idxScan] : "";
-    let qty = 1;
+    const targetTrayNum = parseInt(cols[idxTray], 10);
+    if (isNaN(targetTrayNum)) { skipped++; continue; }
+
+    const brand = idxBrand >= 0 ? cols[idxBrand]?.trim() : "Unknown";
+    const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen]?.trim() : "Unknown";
+    const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial]?.trim() : "";
+    const scanRaw = idxScan >= 0 ? cols[idxScan]?.trim() : `CSV_ROW_${i}_${partNum}`;
+    let targetTotalQty = 1;
     if (idxQty >= 0) {
       const parsedQty = parseInt(cols[idxQty], 10);
-      if (!isNaN(parsedQty) && parsedQty > 0) qty = parsedQty;
+      if (!isNaN(parsedQty) && parsedQty > 0) targetTotalQty = parsedQty;
     }
+
+    const classification = { partNumber: partNum, brand, generation: gen, serial, label: "" };
+
+    let currentTray = state.trays.find(t => t.projectId == project.id && t.trayNum == targetTrayNum);
     
-    let tray = state.trays.find(t => t.projectId == project.id && t.trayNum == trayNumRaw);
-    if (tray) {
-      if (tray.partNumber.toUpperCase() !== partNum.toUpperCase()) {
-        const replace = confirm(`Conflict in Tray #${trayNumRaw}!\n\nExisting part: ${tray.partNumber}\nCSV part: ${partNum}\n\nClick OK to REPLACE the tray's part number.\nClick Cancel to SKIP this row.`);
-        if (replace) {
-          tray.partNumber = partNum;
-          tray.brand = brand;
-          tray.generation = gen;
-        } else { skipped++; continue; }
+    if (currentTray) {
+      if (currentTray.partNumber.toUpperCase() !== partNum) {
+        // Different part - skip or force new assignment
+        const assignment = await assignTray(project.id, session.currentUser.id, classification);
+        currentTray = assignment.isNew ? { ...assignment.tray, sticks: [] } : state.trays.find(t => t.id == assignment.tray.id);
+        if (assignment.isNew) {
+           state.trays.push(currentTray);
+           await dbSave('trays', 'insert', currentTray);
+        }
       }
     } else {
-      tray = {
-        id: generateId('t'),
-        projectId: project.id, ownerUserId: session.currentUser.id,
+      currentTray = {
+        id: generateId('t'), projectId: project.id, ownerUserId: session.currentUser.id,
         partNumber: partNum, label: "", brand, generation: gen,
-        trayNum: trayNumRaw, capacity: project.defaultCap, sticks: [],
-        createdAt: Date.now(), createdBy: session.currentUser.id,
-        projectName: project.name
+        trayNum: targetTrayNum, capacity: project.defaultCap, sticks: [],
+        createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
       };
-      state.trays.push(tray);
-      await dbSave('trays', 'insert', tray);
+      state.trays.push(currentTray);
+      state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, targetTrayNum);
+      await dbSave('trays', 'insert', currentTray);
     }
+
+    let toAdd = (method === "sync") ? Math.max(0, targetTotalQty - currentTray.sticks.length) : targetTotalQty;
+    if (toAdd === 0) { skipped++; continue; }
     
-    const scanId = generateId('s');
-    const newScan = {
-      id: scanId, projectId: project.id, userId: session.currentUser.id,
-      ts: Date.now() + i, scan: scanRaw,
-      result: { partNumber: partNum, serial, brand, generation: gen, method: "csv_import", quantity: qty },
-      trayId: tray.id, quantity: qty
-    };
-    
-    for (let q = 0; q < qty; q++) {
-      tray.sticks.push(scanId);
+    while (toAdd > 0) {
+      let space = currentTray.capacity - currentTray.sticks.length;
+      
+      if (space <= 0) {
+        const assignment = await assignTray(project.id, session.currentUser.id, classification);
+        if (!assignment) break; 
+        if (assignment.isNew) {
+          currentTray = { ...assignment.tray, sticks: [] };
+          state.trays.push(currentTray);
+          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, currentTray.trayNum);
+          await dbSave('trays', 'insert', currentTray);
+        } else {
+          currentTray = state.trays.find(t => t.id == assignment.tray.id);
+        }
+        space = currentTray.capacity - currentTray.sticks.length;
+      }
+
+      const batch = Math.min(space, toAdd);
+      if (batch > 0) {
+        for (let b = 0; b < batch; b++) {
+          const scanId = generateId('s');
+          const newScan = {
+            id: scanId, projectId: project.id, userId: session.currentUser.id,
+            ts: Date.now() + i + (totalAdded * 0.001), scan: scanRaw,
+            result: { ...classification, method: "csv_import" },
+            trayId: currentTray.id
+          };
+          currentTray.sticks.push(scanId);
+          state.scans.unshift(newScan);
+          await dbSave('scans', 'insert', newScan);
+        }
+        await dbSave('trays', 'update', { updates: { sticks: currentTray.sticks }, id: currentTray.id }, 'id');
+        totalAdded += batch;
+        toAdd -= batch;
+      } else break;
     }
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks, partNumber: tray.partNumber, brand: tray.brand, generation: tray.generation }, id: tray.id }, 'id');
-    
-    state.scans.unshift(newScan);
-    await dbSave('scans', 'insert', newScan);
-    success++;
   }
   
-  state.trayCounters[project.id] = maxTrayNum;
+  window.isBulkScanning = false;
   window._pendingCSVImportLines = null;
   window._pendingCSVImportParseLine = null;
-  document.getElementById("csv-upload").value = "";
+  const fileInput = document.getElementById("csv-upload");
+  if (fileInput) fileInput.value = "";
   
-  showToast(`Import complete: ${success} scans added (${skipped} skipped).`, "#3ed685");
-  renderAdminPage();
+  showToast(`Import complete: ${totalAdded} sticks added${skipped > 0 ? ` · ${skipped} rows skipped` : ''}.`, "#3ed685");
+  render(); 
 }
 
 function printTrayLabelById(trayId) {
