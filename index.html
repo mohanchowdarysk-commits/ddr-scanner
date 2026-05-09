@@ -378,11 +378,12 @@ const DEFAULT_STATE = {
     { id: "p1", name: "DDR Sort \u2014 Q4", mode: "mixed",    memberIds: ["u2","u3","u4"], defaultCap: 50,  autoprint: true,  createdBy: "u1", createdAt: Date.now() - 86400000 },
     { id: "p2", name: "Bulk Audit",     mode: "separate", memberIds: ["u2","u5"],     defaultCap: 100, autoprint: true,  createdBy: "u1", createdAt: Date.now() - 3600000  },
   ],
-  scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: "",
+  scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: "", recycleBin: [],
 };
 
 let state = {
-  users: [], projects: [], scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: ""
+  users: [], projects: [], scans: [], trays: [], trayCounters: {}, engine: "rule", geminiKey: "",
+  recycleBin: [] // { type: 'tray'|'scan'|'stick', data: {...}, deletedAt, deletedBy }
 };
 let stateLoaded = false;
 let useSupabase = !!sb;
@@ -618,10 +619,15 @@ function setupRealtime() {
       }
     });
     
-  // Periodic full sync + offline queue flush every 30 seconds
-  setInterval(() => { fetchDataSilent(); flushOfflineQueue(); }, 30000);
+  // Periodic full sync + offline queue flush + empty tray cleanup
+  setInterval(() => { 
+    fetchDataSilent(); 
+    flushOfflineQueue(); 
+    cleanupEmptyTrays();
+    enforceCapacity();
+  }, 30000);
   // Initial flush on connect
-  setTimeout(() => flushOfflineQueue(), 3000);
+  setTimeout(() => { flushOfflineQueue(); enforceCapacity(); }, 3000);
 }
 
 window.isBulkScanning = false;
@@ -649,9 +655,12 @@ async function fetchDataSilent() {
     
     updateTrayCounters();
     
-    // Only re-render if user is NOT typing
+    // Only re-render if user is NOT typing AND no modal is open
     const active = document.activeElement;
-    if (!(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'))) {
+    const modal = document.getElementById('modal');
+    const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+    const isModalOpen = modal && modal.classList.contains('show');
+    if (!isTyping && !isModalOpen && !_scanBusy) {
       render();
     }
   } catch (err) { console.warn("Realtime refresh failed:", err); }
@@ -680,7 +689,7 @@ async function flushOfflineQueue() {
   for (const op of queue) {
     try {
       let res;
-      if (op.action === 'insert') res = await sb.from(op.table).upsert(op.data); // use upsert for safety
+      if (op.action === 'insert') res = await sb.from(op.table).upsert(op.data);
       else if (op.action === 'update') res = await sb.from(op.table).update(op.data.updates).eq(op.matchField, op.data.id);
       else if (op.action === 'upsert') res = await sb.from(op.table).upsert(op.data);
       else if (op.action === 'delete') res = await sb.from(op.table).delete().eq(op.matchField, op.data.id);
@@ -689,9 +698,88 @@ async function flushOfflineQueue() {
   }
   saveOfflineQueue(failed);
   if (queue.length > failed.length) {
-    console.log('Offline queue: synced ' + (queue.length - failed.length) + ' ops, ' + failed.length + ' remaining');
+    console.log('Offline queue: synced ' + (queue.length - failed.length) + ' ops');
     if (failed.length === 0) showToast('Offline changes synced!', '#3ed685');
   }
+}
+
+function cleanupEmptyTrays() {
+  const emptyTrays = state.trays.filter(t => !t.sticks || t.sticks.length === 0);
+  if (emptyTrays.length === 0) return;
+  for (const t of emptyTrays) {
+    state.trays = state.trays.filter(tr => tr.id !== t.id);
+    if (useSupabase && sb) {
+      sb.from('trays').delete().eq('id', t.id).then(() => {}).catch(() => {});
+    }
+  }
+  if (emptyTrays.length > 0) {
+    saveLocalState();
+    console.log('Cleaned up ' + emptyTrays.length + ' empty trays');
+  }
+}
+
+function enforceCapacity() {
+  let changed = false;
+  const overfull = state.trays.filter(t => t.sticks && t.sticks.length > t.capacity);
+  for (const tray of overfull) {
+    const excess = tray.sticks.length - tray.capacity;
+    const overflow = tray.sticks.splice(tray.capacity, excess);
+    
+    // Create a new overflow tray
+    const project = state.projects.find(p => p.id == tray.projectId);
+    const newNum = getNextTrayNum(tray.projectId);
+    const newTray = {
+      id: generateId('t'),
+      projectId: tray.projectId,
+      ownerUserId: tray.ownerUserId,
+      partNumber: tray.partNumber,
+      label: tray.label || "",
+      brand: tray.brand || "Unknown",
+      generation: tray.generation || "Unknown",
+      trayNum: newNum,
+      capacity: project?.defaultCap || tray.capacity,
+      sticks: overflow,
+      createdAt: Date.now(),
+      createdBy: tray.createdBy,
+      projectName: tray.projectName,
+    };
+    state.trays.push(newTray);
+    state.trayCounters[tray.projectId] = newNum;
+    
+    // Update scan trayIds for moved sticks
+    for (const sId of overflow) {
+      const scan = state.scans.find(s => s.id == sId);
+      if (scan) scan.trayId = newTray.id;
+    }
+    
+    // Background DB sync
+    (async () => {
+      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+      await dbSave('trays', 'insert', newTray);
+      for (const sId of overflow) {
+        await dbSave('scans', 'update', { updates: { trayId: newTray.id }, id: sId }, 'id');
+      }
+    })();
+    
+    showToast('⊕ Tray #' + tray.trayNum + ' was over capacity — ' + excess + ' sticks moved to new Tray #' + newNum, '#4fa3ff');
+    changed = true;
+  }
+  if (changed) saveLocalState();
+}
+
+/* ═══ RECYCLE BIN ═══ */
+function moveToBin(type, data) {
+  if (!state.recycleBin) state.recycleBin = [];
+  state.recycleBin.unshift({
+    type,
+    data: JSON.parse(JSON.stringify(data)),
+    deletedAt: Date.now(),
+    deletedBy: session.currentUser?.id || 'unknown',
+    deletedByName: session.currentUser?.name || 'Unknown'
+  });
+  // Keep only last 100 items
+  if (state.recycleBin.length > 100) state.recycleBin = state.recycleBin.slice(0, 100);
+  saveLocalState();
 }
 
 async function dbSave(table, action, data, matchField, retries = 2) {
@@ -1086,7 +1174,7 @@ function assignTray(projectId, userId, classification) {
     id: generateId('t'),
     projectId,
     ownerUserId: project.mode === "separate" ? userId : null,
-    partNumber: classification.partNumber,
+    partNumber: (classification.partNumber || '').toUpperCase(),
     label: classification.label || "",
     brand: classification.brand || "Unknown",
     generation: classification.generation || "Unknown",
@@ -1525,7 +1613,7 @@ function renderScanner() {
             const lt = state.trays.find(t => t.id == ls.trayId);
             const hasDupe = session.lastDuplicateWarning;
             return `
-            <div style="margin-top: 1rem; background: #15151c; border: 1px solid ${hasDupe ? 'rgba(255,107,138,0.3)' : '#2a2a35'}; border-radius: 0.75rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem;">
+            <div id="last-scan-bar" style="margin-top: 1rem; background: #15151c; border: 1px solid ${hasDupe ? 'rgba(255,107,138,0.3)' : '#2a2a35'}; border-radius: 0.75rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem;">
               <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; white-space: nowrap;">LAST</div>
               <div style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                 <span class="mono" style="font-size: 0.95rem; font-weight: 800; color: #FFD700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${escapeHtml(ls.result?.partNumber || '?')}</span>
@@ -1537,7 +1625,7 @@ function renderScanner() {
               ${hasDupe ? '<span style="font-size: 0.75rem; color: #ff6b8a; font-weight: 700; white-space: nowrap;">⚠ DUP</span>' : ''}
               <button onclick="undoLastScan()" style="background: transparent; border: 1px solid rgba(255,107,138,0.25); color: #ff6b8a; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 700; border-radius: 0.375rem; cursor: pointer; white-space: nowrap;" title="Remove this scan">↩ Undo</button>
             </div>`;
-          })() : ''}
+          })() : `<div id="last-scan-bar" style="margin-top: 1rem; background: #15151c; border: 1px solid #2a2a35; border-radius: 0.75rem; padding: 0.75rem 1rem; display: none; align-items: center; gap: 0.75rem;"></div>`}
           
         </div>
         <div id="result-card-container"></div>
@@ -1556,8 +1644,8 @@ function renderScanner() {
       </div>
       
       <div>
-        <h1 class="h">Recent · ${getProjectStickCount(session.currentProjectId)} sticks</h1>
-        <div class="card" style="padding: 0; overflow: hidden; max-height: calc(100vh - 220px); overflow-y: auto;">
+        <h1 class="h">Recent · <span id="recent-stick-count">${getProjectStickCount(session.currentProjectId)}</span> sticks</h1>
+        <div id="recent-scans-list" class="card" style="padding: 0; overflow: hidden; max-height: calc(100vh - 220px); overflow-y: auto;">
           ${projectScans.length === 0 ? `
             <div class="empty" style="padding: 32px;">
               <div style="font-size: 14px;">No scans yet</div>
@@ -1633,6 +1721,37 @@ async function toggleAutoprint(checked) {
   }
 }
 
+function updateRecentScans() {
+  const listEl = document.getElementById('recent-scans-list');
+  const countEl = document.getElementById('recent-stick-count');
+  if (!listEl) return;
+  
+  const projectScans = state.scans.filter(s => s.projectId == session.currentProjectId).sort((a,b) => b.ts - a.ts);
+  countEl && (countEl.textContent = getProjectStickCount(session.currentProjectId));
+  
+  if (projectScans.length === 0) {
+    listEl.innerHTML = '<div class="empty" style="padding: 32px;"><div style="font-size: 14px;">No scans yet</div></div>';
+    return;
+  }
+  listEl.innerHTML = projectScans.slice(0, 25).map(s => {
+    const u = state.users.find(u => u.id === s.userId);
+    const tray = state.trays.find(t => t.id === s.trayId);
+    return `
+      <div style="padding: 1rem 1.25rem; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 0.75rem;">
+        <div class="avatar" style="background: ${u?.color || '#555'}; font-size: 0.9rem;">${u?.name?.charAt(0)?.toUpperCase() || '?'}</div>
+        <div style="flex: 1; min-width: 0;">
+          <div class="mono truncate" style="font-size: 1rem; color: #fff; font-weight: 600;">${escapeHtml(s.result?.partNumber || s.scan?.slice(0, 30) || '?')}</div>
+          <div style="font-size: 0.85rem; color: #888; margin-top: 0.25rem;">
+            Tray #${tray?.trayNum ?? '?'} · ${timeAgo(s.ts)}
+            ${tray && state.users.find(u2 => u2.id == tray.ownerUserId) ? ' · <span style="color: ' + state.users.find(u2 => u2.id == tray.ownerUserId).color + '; opacity: 0.8; font-weight: 700;">' + state.users.find(u2 => u2.id == tray.ownerUserId).name + '</span>' : ""}
+          </div>
+          ${s.result?.serial ? '<div class="mono" style="font-size: 0.85rem; color: #3ed685; margin-top: 0.125rem;">S/N: ' + escapeHtml(s.result.serial) + '</div>' : ''}
+        </div>
+        <span class="pill" style="background: ${BRAND_META[s.result?.brand]?.hex || '#555'}; font-size: 0.75rem;">${escapeHtml(s.result?.brand || 'Unknown')}</span>
+      </div>`;
+  }).join('');
+}
+
 function renderResultCard(r, tray) {
   const brandMeta = BRAND_META[r.brand] || BRAND_META.Unknown;
   const genMeta = GEN_META[r.generation] || GEN_META.Unknown;
@@ -1694,42 +1813,6 @@ function renderResultCard(r, tray) {
 }
 
 /* ═══ UNDO LAST SCAN ═══ */
-async function undoLastScan() {
-  const lastScan = session.lastScan;
-  if (!lastScan) { showToast("Nothing to undo", "#888"); return; }
-  
-  const tray = state.trays.find(t => t.id == lastScan.trayId);
-  if (!tray) { showToast("Tray not found", "#ff6b8a"); return; }
-  
-  // Remove stick from tray
-  const idx = tray.sticks.indexOf(lastScan.id);
-  if (idx !== -1) {
-    tray.sticks.splice(idx, 1);
-    await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
-  }
-  
-  // Remove scan record
-  state.scans = state.scans.filter(s => s.id !== lastScan.id);
-  if (useSupabase && sb) {
-    try { await sb.from('scans').delete().eq('id', lastScan.id); } catch (e) {}
-  }
-  
-  // If the tray was just created and is now empty, delete it
-  if (session.lastAssignment?.isNew && tray.sticks.length === 0) {
-    state.trays = state.trays.filter(t => t.id !== tray.id);
-    if (useSupabase && sb) {
-      try { await sb.from('trays').delete().eq('id', tray.id); } catch (e) {}
-    }
-  }
-  
-  saveLocalState();
-  session.lastScan = null;
-  session.lastAssignment = null;
-  session.lastDuplicateWarning = null;
-  showToast("↩ Last scan undone", "#ff6b8a");
-  renderScanner();
-}
-
 /* ═══ DUPLICATE SERIAL DETECTION ═══ */
 function checkDuplicateSerial(serial, projectId, currentScanId) {
   if (!serial || serial.trim() === '' || serial === '-') return null;
@@ -1821,7 +1904,8 @@ function renderTraysPage() {
           const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
           const pct = Math.min(100, (t.sticks.length / t.capacity) * 100);
           const isFull = t.sticks.length >= t.capacity;
-          const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
+          const brandStr = (typeof t.brand === 'string' && t.brand && BRAND_META[t.brand]) ? t.brand : 'Unknown';
+          const bm = BRAND_META[brandStr] || BRAND_META.Unknown;
           const barColor = isFull ? "#ff6b8a" : pct > 80 ? "#FFD700" : "#3ed685";
           const isExp = expandedTrays.has(String(t.id));
           
@@ -1846,11 +1930,11 @@ function renderTraysPage() {
               </div>
               
               <div class="mono" style="font-size: 1rem; font-weight: 700; color: #fff; word-break: break-all; margin-bottom: 0.75rem; min-height: 2.5rem; line-height: 1.3;">
-                ${escapeHtml(t.partNumber)}
+                ${escapeHtml((t.partNumber || '').toUpperCase())}
               </div>
               
               <div class="flex gap-8" style="margin-bottom: 1.25rem;">
-                <span class="pill" style="background: ${bm.hex}; padding: 0.35rem 0.6rem; font-size: 0.75rem;">${escapeHtml(t.brand)}</span>
+                <span class="pill" style="background: ${bm.hex}; padding: 0.35rem 0.6rem; font-size: 0.75rem;">${escapeHtml(brandStr)}</span>
                 <span class="pill" style="background: ${GEN_META[t.generation]?.bg || '#1a1a22'}; color: ${GEN_META[t.generation]?.fg || '#888'}; padding: 0.35rem 0.6rem; font-size: 0.75rem;">${escapeHtml(t.generation)}</span>
               </div>
               
@@ -1963,7 +2047,12 @@ async function doBulkScan() {
   })();
 }
 
+let _scanBusy = false; // mutex — prevents concurrent scan executions
+
 async function doScan() {
+  if (_scanBusy) return; // already scanning — ignore duplicate triggers
+  _scanBusy = true;
+  
   const input = document.getElementById("scan-input");
   const btn = document.getElementById("scan-btn");
   let scan = input.value.trim();
@@ -2061,41 +2150,86 @@ async function doScan() {
   }
   
   btn.textContent = "Scan ▶"; btn.disabled = false;
-  renderScanner();
+  _scanBusy = false;
+  
+  // Update recent scans list, last-scan bar, and stick count in-place
+  updateRecentScans();
+  
+  const lastBar = document.getElementById("last-scan-bar");
+  if (lastBar && session.lastScan) {
+    const ls = session.lastScan;
+    const lt = state.trays.find(t => t.id == ls.trayId);
+    const hasDupe = session.lastDuplicateWarning;
+    lastBar.innerHTML = `
+      <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; white-space: nowrap;">LAST</div>
+      <div style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span class="mono" style="font-size: 0.95rem; font-weight: 800; color: #FFD700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${escapeHtml(ls.result?.partNumber || '?')}</span>
+        <span style="color: #444;">→</span>
+        <span style="font-size: 0.85rem; color: #3ed685; font-weight: 700;">Tray #${lt?.trayNum || '?'}</span>
+        <span style="font-size: 0.75rem; color: #555;">(${lt?.sticks?.length || 0}/${lt?.capacity || '?'})</span>
+      </div>
+      ${hasDupe ? '<span style="font-size: 0.75rem; color: #ff6b8a; font-weight: 700; white-space: nowrap;">⚠ DUP</span>' : ''}
+      <button onclick="undoLastScan()" style="background: transparent; border: 1px solid rgba(255,107,138,0.25); color: #ff6b8a; padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 700; border-radius: 0.375rem; cursor: pointer; white-space: nowrap;">↩ Undo</button>
+    `;
+    lastBar.style.display = 'flex';
+  }
+  
+  // Update stick count
+  const countEl = document.getElementById('recent-stick-count');
+  if (countEl) countEl.textContent = getProjectStickCount(session.currentProjectId);
 }
 
 async function undoLastScan() {
   if (!session.lastScan) return;
   const lastScanId = session.lastScan.id;
   const lastTrayId = session.lastScan.trayId;
-  const isNewTray = session.lastAssignment?.isNew;
   
   // Clear session refs immediately to prevent double-undo
   session.lastScan = null;
   session.lastAssignment = null;
+  session.lastDuplicateWarning = null;
   
-  showToast("Undoing last scan...", "#FFD700");
+  // 1. Save to bin before removing
+  const undoneScn = state.scans.find(s => s.id === lastScanId);
+  if (undoneScn) moveToBin('stick', { scan: {...undoneScn}, trayId: lastTrayId, trayNum: state.trays.find(t => t.id === lastTrayId)?.trayNum || '?' });
   
-  // 1. Remove from local state
+  // 2. Remove scan from local state
   state.scans = state.scans.filter(s => s.id !== lastScanId);
   
   // 2. Remove from tray sticks
   const tray = state.trays.find(t => t.id === lastTrayId);
+  let trayDeleted = false;
   if (tray) {
     tray.sticks = (tray.sticks || []).filter(id => id !== lastScanId);
-  }
-  
-  // 3. Delete from DB in background
-  if (useSupabase && sb) {
-    // If it was the only stick, the tray might need deletion (handled by sync normally, but we can be proactive)
-    if (tray && tray.sticks.length === 0) {
-       // We'll let the background sync handle cleanup to keep it simple and fast
+    
+    // 3. If tray is now empty, delete it entirely
+    if (tray.sticks.length === 0) {
+      state.trays = state.trays.filter(t => t.id !== lastTrayId);
+      trayDeleted = true;
     }
-    sb.from('trays').update({ sticks: tray?.sticks || [] }).eq('id', lastTrayId).then();
-    sb.from('scans').delete().eq('id', lastScanId).then();
   }
   
   saveLocalState();
+  
+  // 4. Background DB cleanup
+  (async () => {
+    try {
+      if (useSupabase && sb) {
+        await sb.from('scans').delete().eq('id', lastScanId);
+        if (trayDeleted) {
+          await sb.from('trays').delete().eq('id', lastTrayId);
+        } else if (tray) {
+          await sb.from('trays').update({ sticks: tray.sticks }).eq('id', lastTrayId);
+        }
+      }
+    } catch (e) { console.warn("Undo DB cleanup error:", e); }
+  })();
+  
+  // Hide the last-scan bar
+  const lastBar = document.getElementById("last-scan-bar");
+  if (lastBar) lastBar.style.display = 'none';
+  
+  showToast(trayDeleted ? "↩ Scan undone · empty tray removed" : "↩ Scan undone", "#ff6b8a");
   renderScanner();
 }
 
@@ -2198,6 +2332,9 @@ function confirmDeleteTray(trayId) {
 async function deleteTray(trayId) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray) return;
+  const removedScans = state.scans.filter(s => tray.sticks.includes(s.id));
+  // Save to bin before deleting
+  moveToBin('tray', { tray: { ...tray }, scans: removedScans.map(s => ({...s})) });
   const removedScanIds = new Set(tray.sticks);
   state.scans = state.scans.filter(s => !removedScanIds.has(s.id));
   state.trays = state.trays.filter(t => t.id != trayId);
@@ -2387,14 +2524,15 @@ async function promptMergeTray(sourceTrayId) {
   if (!sourceTray) return;
   
   const project = state.projects.find(p => p.id == sourceTray.projectId);
+  const isAdmin = session.currentUser?.role === 'admin' || session.currentUser?.role === 'supervisor';
   const allTrays = state.trays
-    .filter(t => t.projectId == sourceTray.projectId && t.id != sourceTray.id && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId))
+    .filter(t => t.projectId == sourceTray.projectId && t.id != sourceTray.id && (project.mode != 'separate' || isAdmin || t.ownerUserId == sourceTray.ownerUserId))
     .sort((a,b) => a.trayNum - b.trayNum);
   
-  // Split into matching part and other
-  const srcPart = sourceTray.partNumber.toUpperCase();
-  const matchingTrays = allTrays.filter(t => t.partNumber.toUpperCase() === srcPart);
-  const otherTrays = allTrays.filter(t => t.partNumber.toUpperCase() !== srcPart);
+  // Split into matching part and other (case-insensitive)
+  const srcPart = (sourceTray.partNumber || '').toUpperCase();
+  const matchingTrays = allTrays.filter(t => (t.partNumber || '').toUpperCase() === srcPart);
+  const otherTrays = allTrays.filter(t => (t.partNumber || '').toUpperCase() !== srcPart);
   
   const makeOption = (t, highlight) => {
     const full = t.sticks.length >= t.capacity;
@@ -2432,12 +2570,13 @@ async function promptMergeTray(sourceTrayId) {
           const full = t.sticks.length >= t.capacity;
           const canFit = t.capacity - t.sticks.length;
           const willOverflow = sourceTray.sticks.length > canFit;
+          const tOwner = state.users.find(u => u.id == t.ownerUserId);
           return `
           <button onclick="${full ? '' : `document.getElementById('merge-target-num').value='${t.trayNum}'`}" 
             style="text-align: left; border: 1px solid ${full ? '#2a2a35' : '#3ed685'}; background: ${full ? '#15151c' : 'rgba(62,214,133,0.05)'}; border-radius: 0.625rem; padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; ${full ? 'opacity: 0.5; cursor: not-allowed;' : 'cursor: pointer;'}">
             <div style="font-size: 1.1rem; font-weight: 800; color: #3ed685; min-width: 3rem; font-family: monospace;">#${t.trayNum}</div>
             <div style="flex: 1;">
-              <div style="font-size: 0.85rem; color: #fff; font-weight: 600;">${t.sticks.length}/${t.capacity} sticks</div>
+              <div style="font-size: 0.85rem; color: #fff; font-weight: 600;">${t.sticks.length}/${t.capacity} sticks${tOwner ? ` · <span style="color: ${tOwner.color}; font-weight: 700;">${escapeHtml(tOwner.name)}</span>` : ''}</div>
               <div style="font-size: 0.7rem; color: ${full ? '#ff6b8a' : willOverflow ? '#FFD700' : '#888'};">
                 ${full ? 'FULL — cannot merge here' : willOverflow ? `Room for ${canFit} — ${sourceTray.sticks.length - canFit} will need another tray` : `Room for ${canFit} — all sticks fit`}
               </div>
@@ -2456,6 +2595,10 @@ async function promptMergeTray(sourceTrayId) {
       <div class="label">Target tray number</div>
       <input type="number" id="merge-target-num" min="1" placeholder="Enter or click a tray above" />
     </div>
+    <div class="field">
+      <div class="label">How many sticks to move? (max ${sourceTray.sticks.length})</div>
+      <input type="number" id="merge-qty" min="1" max="${sourceTray.sticks.length}" value="${sourceTray.sticks.length}" />
+    </div>
     ${otherTrays.length > 0 ? `
       <div class="field">
         <div class="label" style="color: #888;">Or pick from other trays (different part)</div>
@@ -2466,7 +2609,7 @@ async function promptMergeTray(sourceTrayId) {
       </div>
     ` : ''}
     <div style="font-size: 0.85rem; color: #ff6b8a; margin-bottom: 1rem; line-height: 1.5;">
-      ⚠ All sticks from Tray #${sourceTray.trayNum} will be moved to the target. Source tray will be <b>deleted</b>.
+      ⚠ Sticks will be moved from Tray #${sourceTray.trayNum} to the target. Source tray will be <b>deleted</b> if emptied.
     </div>
     <div id="merge-msg"></div>
     <div class="flex gap-12" style="justify-content: flex-end; margin-top: 1rem;">
@@ -2481,6 +2624,7 @@ async function doMergeTray(sourceTrayId) {
   if (!sourceTray) return;
   
   const numStr = document.getElementById("merge-target-num")?.value;
+  const qtyStr = document.getElementById("merge-qty")?.value;
   const msgEl = document.getElementById("merge-msg");
   if (!numStr) {
     if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Enter a target tray number</div>';
@@ -2492,11 +2636,16 @@ async function doMergeTray(sourceTrayId) {
     return;
   }
   
+  let qty = parseInt(qtyStr, 10);
+  if (isNaN(qty) || qty < 1) qty = sourceTray.sticks.length;
+  qty = Math.min(qty, sourceTray.sticks.length);
+  
   const project = state.projects.find(p => p.id == sourceTray.projectId);
-  const targetTray = state.trays.find(t => t.projectId == sourceTray.projectId && t.trayNum == num && (project.mode != 'separate' || t.ownerUserId == sourceTray.ownerUserId));
+  const isAdmin = session.currentUser?.role === 'admin' || session.currentUser?.role === 'supervisor';
+  const targetTray = state.trays.find(t => t.projectId == sourceTray.projectId && t.trayNum == num && (project.mode != 'separate' || isAdmin || t.ownerUserId == sourceTray.ownerUserId));
   
   if (!targetTray) {
-    if (msgEl) msgEl.innerHTML = `<div class="alert alert-error">Tray #${num} not found in this project</div>`;
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Tray #' + num + ' not found in this project</div>';
     return;
   }
   if (targetTray.id == sourceTray.id) {
@@ -2504,30 +2653,49 @@ async function doMergeTray(sourceTrayId) {
     return;
   }
   
-  hideModal();
-  showToast("Merging trays...", "#FFD700");
-  
-  // Move all stick references
-  const uniqueSticks = [...new Set([...targetTray.sticks, ...sourceTray.sticks])];
-  targetTray.sticks = uniqueSticks;
-  
-  // Update all scans to point to new tray
-  for (const sId of sourceTray.sticks) {
-    const scan = state.scans.find(s => s.id == sId);
-    if (scan) {
-      scan.trayId = targetTray.id;
-      await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: scan.id }, 'id');
-    }
+  // Check capacity
+  const available = targetTray.capacity - targetTray.sticks.length;
+  if (available < qty) {
+    if (msgEl) msgEl.innerHTML = '<div class="alert alert-error">Target tray only has room for ' + available + ' more sticks</div>';
+    return;
   }
   
-  // Save target tray state
-  await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+  hideModal();
   
-  // Remove source tray
-  state.trays = state.trays.filter(t => t.id != sourceTray.id);
-  await dbSave('trays', 'delete', { id: sourceTray.id }, 'id');
+  // Move qty sticks from source to target
+  const sticksToMove = sourceTray.sticks.splice(0, qty);
+  targetTray.sticks.push(...sticksToMove);
   
-  showToast(`Successfully merged into Tray #${targetTray.trayNum}`, "#3ed685");
+  // Update scan trayIds
+  for (const sId of sticksToMove) {
+    const scan = state.scans.find(s => s.id == sId);
+    if (scan) scan.trayId = targetTray.id;
+  }
+  
+  // Check if source is now empty — delete it
+  const sourceEmpty = sourceTray.sticks.length === 0;
+  if (sourceEmpty) {
+    state.trays = state.trays.filter(t => t.id != sourceTray.id);
+  }
+  
+  saveLocalState();
+  
+  // Background DB sync
+  (async () => {
+    try {
+      for (const sId of sticksToMove) {
+        await dbSave('scans', 'update', { updates: { trayId: targetTray.id }, id: sId }, 'id');
+      }
+      await dbSave('trays', 'update', { updates: { sticks: targetTray.sticks }, id: targetTray.id }, 'id');
+      if (sourceEmpty) {
+        await dbSave('trays', 'delete', { id: sourceTray.id }, 'id');
+      } else {
+        await dbSave('trays', 'update', { updates: { sticks: sourceTray.sticks }, id: sourceTray.id }, 'id');
+      }
+    } catch (e) { console.warn("Merge DB error:", e); }
+  })();
+  
+  showToast('Moved ' + qty + ' sticks to Tray #' + targetTray.trayNum + (sourceEmpty ? ' · empty source tray deleted' : ''), "#3ed685");
   renderTraysPage();
 }
 
@@ -2690,6 +2858,10 @@ async function confirmDeleteStick(trayId, stickIndex) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray || !tray.sticks[stickIndex]) return;
   const scanId = tray.sticks[stickIndex];
+  const scan = state.scans.find(s => s.id == scanId);
+  
+  // Save to bin
+  if (scan) moveToBin('stick', { scan: {...scan}, trayId, trayNum: tray.trayNum });
   
   // Remove from tray sticks
   tray.sticks.splice(stickIndex, 1);
@@ -2950,6 +3122,7 @@ function renderAdminPage() {
     { id: "members", label: "Members", icon: "🔗" },
     { id: "import", label: "Import", icon: "📄" },
     { id: "danger", label: "Danger", icon: "⚠" },
+    { id: "bin", label: "Bin", icon: "🗑" },
   ];
 
   document.getElementById("page-content").innerHTML = `
@@ -2975,6 +3148,7 @@ function renderAdminPage() {
   else if (adminTab === "members") renderAdminMembers(container, project);
   else if (adminTab === "import") renderAdminImport(container);
   else if (adminTab === "danger") renderAdminDanger(container, project);
+  else if (adminTab === "bin") renderAdminBin(container);
 }
 
 function renderAdminOverview(el, project, trays, scans, userStats, brandCounts) {
@@ -3186,6 +3360,106 @@ function renderAdminDanger(el, project) {
       <button class="btn-ghost" onclick="promptResetAllData()" style="border-color: #ff4444; color: #ff4444; width: 100%; min-height: 3rem;">Reset All System Data</button>
     </div>
   `;
+}
+
+function renderAdminBin(el) {
+  const bin = state.recycleBin || [];
+  el.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+      <div>
+        <h2 class="h2" style="margin-bottom: 0.25rem;">Recycle Bin</h2>
+        <div style="font-size: 0.85rem; color: #666;">${bin.length} deleted items · auto-expires after 100 items</div>
+      </div>
+      ${bin.length > 0 ? `<button class="btn-ghost" onclick="if(confirm('Clear entire recycle bin?')){state.recycleBin=[];saveLocalState();renderAdminPage();}" style="font-size: 0.8rem; color: #ff6b8a; border-color: rgba(255,107,138,0.3);">Empty Bin</button>` : ''}
+    </div>
+    
+    ${bin.length === 0 ? `
+      <div class="card card-tight" style="text-align: center; padding: 3rem; color: #555;">
+        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🗑</div>
+        <div>Nothing in the recycle bin</div>
+      </div>
+    ` : `
+      <div style="display: grid; gap: 0.5rem; max-height: 70vh; overflow-y: auto;">
+        ${bin.map((item, idx) => {
+          const age = Date.now() - item.deletedAt;
+          const timeStr = age < 60000 ? 'just now' : age < 3600000 ? Math.round(age/60000) + 'm ago' : age < 86400000 ? Math.round(age/3600000) + 'h ago' : Math.round(age/86400000) + 'd ago';
+          
+          if (item.type === 'tray') {
+            const t = item.data.tray;
+            return `
+              <div class="card card-tight" style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; border-left: 3px solid #ff6b8a;">
+                <div style="min-width: 3rem; text-align: center;">
+                  <div style="font-size: 1.1rem; font-weight: 900; color: #FFD700;">#${t.trayNum}</div>
+                  <div style="font-size: 0.6rem; color: #888;">TRAY</div>
+                </div>
+                <div style="flex: 1; min-width: 0;">
+                  <div class="mono" style="font-size: 0.85rem; color: #fff; font-weight: 700;">${escapeHtml((t.partNumber || '').toUpperCase())}</div>
+                  <div style="font-size: 0.75rem; color: #888;">${t.sticks?.length || 0} sticks · ${item.deletedByName} · ${timeStr}</div>
+                </div>
+                <button onclick="restoreFromBin(${idx})" class="btn" style="font-size: 0.75rem; padding: 0.35rem 0.75rem; min-height: 0;">Restore</button>
+              </div>`;
+          } else if (item.type === 'stick') {
+            const s = item.data.scan;
+            return `
+              <div class="card card-tight" style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; border-left: 3px solid #4fa3ff;">
+                <div style="min-width: 3rem; text-align: center;">
+                  <div style="font-size: 0.8rem; color: #4fa3ff;">STICK</div>
+                </div>
+                <div style="flex: 1; min-width: 0;">
+                  <div class="mono" style="font-size: 0.85rem; color: #fff; font-weight: 700;">${escapeHtml(s?.result?.partNumber || '?')}</div>
+                  <div style="font-size: 0.75rem; color: #888;">was in Tray #${item.data.trayNum || '?'} · ${item.deletedByName} · ${timeStr}</div>
+                </div>
+                <button onclick="restoreFromBin(${idx})" class="btn" style="font-size: 0.75rem; padding: 0.35rem 0.75rem; min-height: 0;">Restore</button>
+              </div>`;
+          }
+          return '';
+        }).join('')}
+      </div>
+    `}
+  `;
+}
+
+async function restoreFromBin(binIndex) {
+  const bin = state.recycleBin || [];
+  if (!bin[binIndex]) return;
+  const item = bin[binIndex];
+  
+  if (item.type === 'tray') {
+    const t = item.data.tray;
+    // Check if tray ID already exists
+    if (!state.trays.find(tr => tr.id === t.id)) {
+      state.trays.push(t);
+      await dbSave('trays', 'upsert', t);
+    }
+    // Restore scans
+    if (item.data.scans) {
+      for (const s of item.data.scans) {
+        if (!state.scans.find(sc => sc.id === s.id)) {
+          state.scans.push(s);
+          await dbSave('scans', 'upsert', s);
+        }
+      }
+    }
+    showToast('Tray #' + t.trayNum + ' restored with ' + (t.sticks?.length || 0) + ' sticks', '#3ed685');
+  } else if (item.type === 'stick') {
+    const s = item.data.scan;
+    const trayId = item.data.trayId;
+    if (s && !state.scans.find(sc => sc.id === s.id)) {
+      state.scans.push(s);
+      await dbSave('scans', 'upsert', s);
+    }
+    const tray = state.trays.find(t => t.id === trayId);
+    if (tray && s && !tray.sticks.includes(s.id)) {
+      tray.sticks.push(s.id);
+      await dbSave('trays', 'update', { updates: { sticks: tray.sticks }, id: tray.id }, 'id');
+    }
+    showToast('Stick restored to Tray #' + (tray?.trayNum || '?'), '#3ed685');
+  }
+  
+  // Remove from bin
+  bin.splice(binIndex, 1);
+  saveLocalState();
+  renderAdminPage();
 }
 
 /* ═══ User management modals ═══ */
@@ -3544,7 +3818,8 @@ async function executeCSVImport() {
     const targetTrayNum = parseInt(cols[idxTray], 10);
     if (isNaN(targetTrayNum)) { skipped++; continue; }
 
-    const brand = idxBrand >= 0 ? cols[idxBrand]?.trim() : "Unknown";
+    const rawBrand = idxBrand >= 0 ? String(cols[idxBrand] || '').trim() : "Unknown";
+    const brand = (rawBrand && isNaN(rawBrand) && rawBrand !== '0') ? rawBrand : "Unknown";
     const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen]?.trim() : "Unknown";
     const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial]?.trim() : "";
     const scanRaw = idxScan >= 0 ? cols[idxScan]?.trim() : `CSV_ROW_${i}_${partNum}`;
@@ -3673,41 +3948,38 @@ function doPrintLabel(trayId) {
 }
 
 function buildLabelHTML(tray, brandColor) {
-  const date = new Date(tray.createdAt).toLocaleDateString();
-  // Clean part number for barcode (remove special chars that might break Code128)
-  const barcodeText = tray.partNumber.toUpperCase().replace(/[^A-Z0-9\-]/gi, '');
-  // bwip-js settings for clear, tall, full-width barcode
-  // height is in mm, scale=3 for high res, includetext=true to see text below
-  const barcodeUrl = `https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(barcodeText)}&scale=3&rotate=N&height=15&includetext&textsize=8&textyoffset=2`;
+  const barcodeText = (tray.partNumber || '').toUpperCase().replace(/[^A-Z0-9\-]/gi, '');
+  const barcodeUrl = `https://bwipjs-api.metafloor.com/?bcid=code128&text=${encodeURIComponent(barcodeText)}&scale=3&rotate=N&height=12&includetext&textsize=7&textyoffset=1`;
+  const partLen = (tray.partNumber || '').length;
+  const partFontSize = partLen > 25 ? '10pt' : partLen > 18 ? '12pt' : '14pt';
   
   return `
-    <div style="width: 4in; height: 1.5in; box-sizing: border-box; display: flex; flex-direction: column; padding: 0.08in 0.15in; font-family: 'Helvetica', Arial, sans-serif; color: #000; background: #fff; overflow: hidden; border: 1px solid #ddd;">
-      <!-- Top Info Row -->
-      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10pt; border-bottom: 2pt solid #000; padding-bottom: 3pt; margin-bottom: 5pt;">
+    <div style="width: 4in; height: 1.5in; box-sizing: border-box; display: flex; flex-direction: column; padding: 0.06in 0.12in; font-family: 'Helvetica', Arial, sans-serif; color: #000; background: #fff; overflow: hidden; border: 1px solid #ddd;">
+      <!-- Top Row -->
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9pt; border-bottom: 2pt solid #000; padding-bottom: 2pt; margin-bottom: 3pt;">
         <span style="font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(tray.projectName)}</span>
-        <span style="display: flex; gap: 8px;">
-          <span style="border: 1.5pt solid #000; padding: 1pt 8pt; font-size: 9pt; font-weight: 900;">${escapeHtml(tray.brand.toUpperCase())}</span>
-          <span style="background: #000; color: #fff; padding: 1pt 8pt; font-size: 9pt; font-weight: 900;">${escapeHtml(tray.generation)}</span>
+        <span style="display: flex; gap: 6px;">
+          <span style="border: 1.5pt solid #000; padding: 1pt 6pt; font-size: 8pt; font-weight: 900;">${escapeHtml((tray.brand || 'Unknown').toUpperCase())}</span>
+          <span style="background: #000; color: #fff; padding: 1pt 6pt; font-size: 8pt; font-weight: 900;">${escapeHtml(tray.generation || 'Unknown')}</span>
         </span>
       </div>
       
-      <!-- Middle Content Area -->
-      <div style="display: flex; flex: 1; align-items: flex-start; gap: 0.2in;">
-        <div style="display: flex; flex-direction: column; align-items: center; min-width: 0.9in;">
-          <div style="font-size: 44pt; font-weight: 900; line-height: 0.8; letter-spacing: -2pt;">#${tray.trayNum}</div>
-          <div style="font-size: 7pt; font-weight: 800; text-transform: uppercase; margin-top: 4pt;">TRAY NUMBER</div>
+      <!-- Middle -->
+      <div style="display: flex; align-items: flex-start; gap: 0.15in; flex: 1;">
+        <div style="display: flex; flex-direction: column; align-items: center; min-width: 0.75in;">
+          <div style="font-size: 38pt; font-weight: 900; line-height: 0.85; letter-spacing: -2pt;">#${tray.trayNum}</div>
+          <div style="font-size: 6pt; font-weight: 800; text-transform: uppercase; margin-top: 2pt;">TRAY NUMBER</div>
         </div>
         
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-family: 'Courier New', monospace; font-size: 14pt; font-weight: 900; word-break: break-all; line-height: 1.1; margin-bottom: 2pt;">${escapeHtml(tray.partNumber)}</div>
-          <div style="font-size: 8pt; color: #000; font-weight: 600;">CAP: ${tray.capacity} · ${date}</div>
-          <div style="margin-top: 4pt; font-size: 10pt; font-weight: 900; border: 1.5pt solid #000; padding: 2pt 8pt; display: inline-block;">QTY: ________</div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+          <div style="font-family: 'Courier New', monospace; font-size: ${partFontSize}; font-weight: 900; word-break: break-all; line-height: 1.05; overflow: hidden; max-height: 0.38in;">${escapeHtml((tray.partNumber || '').toUpperCase())}</div>
+          <div style="font-size: 10pt; font-weight: 900; border: 1.5pt solid #000; padding: 1pt 8pt; display: inline-block; align-self: flex-start;">QTY: ________</div>
         </div>
       </div>
 
-      <!-- Bottom Barcode Spread -->
-      <div style="margin-top: auto; padding-top: 4pt; display: flex; flex-direction: column; align-items: center;">
-        <img src="${barcodeUrl}" style="width: 3.5in; height: 0.5in; object-fit: fill; image-rendering: pixelated; display: block;" alt="Barcode" />
+      <!-- Barcode -->
+      <div style="padding-top: 2pt; display: flex; justify-content: center;">
+        <img src="${barcodeUrl}" style="width: 3.6in; height: 0.38in; object-fit: contain; image-rendering: pixelated; display: block;" alt="Barcode" onerror="this.style.display='none'" />
       </div>
     </div>
   `;
