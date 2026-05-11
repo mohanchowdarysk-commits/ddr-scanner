@@ -431,7 +431,7 @@ async function initSupabaseState() {
     const [usersRes, projectsRes, scansRes, traysRes, settingsRes] = await Promise.all([
       sb.from('users').select('*'),
       sb.from('projects').select('*'),
-      sb.from('scans').select('*').order('ts', { ascending: false }),
+      sb.from('scans').select('*').order('ts', { ascending: false }).limit(1000),
       sb.from('trays').select('*'),
       sb.from('settings').select('*')
     ]);
@@ -619,14 +619,16 @@ function setupRealtime() {
       }
     });
     
-  // Periodic full sync + offline queue flush + empty tray cleanup
+  // Periodic sync — only needed as fallback when realtime drops
   setInterval(() => { 
-    fetchDataSilent(); 
     flushOfflineQueue(); 
     cleanupEmptyTrays();
     enforceCapacity();
-  }, 30000);
-  // Initial flush on connect
+  }, 60000);
+  
+  // Full DB sync much less frequently — realtime handles live updates
+  setInterval(() => { fetchDataSilent(); }, 120000);
+  
   setTimeout(() => { flushOfflineQueue(); enforceCapacity(); }, 3000);
 }
 
@@ -635,16 +637,23 @@ window.isBulkScanning = false;
 async function fetchDataSilent() {
   if (!sb || window.isBulkScanning) return;
   try {
-    const [projectsRes, scansRes, traysRes, settingsRes] = await Promise.all([
+    const [projectsRes, traysRes, settingsRes] = await Promise.all([
       sb.from('projects').select('*'),
-      sb.from('scans').select('*').order('ts', { ascending: false }),
       sb.from('trays').select('*'),
       sb.from('settings').select('*')
     ]);
     
     if (projectsRes.data) state.projects = projectsRes.data;
-    if (scansRes.data) state.scans = scansRes.data;
     if (traysRes.data) state.trays = traysRes.data;
+    
+    // Only fetch recent scans — not the entire history
+    const scansRes = await sb.from('scans').select('*').order('ts', { ascending: false }).limit(500);
+    if (scansRes.data) {
+      // Merge: keep any local scans not in DB result (recently added, not yet synced)
+      const dbIds = new Set(scansRes.data.map(s => s.id));
+      const localOnly = state.scans.filter(s => !dbIds.has(s.id));
+      state.scans = [...scansRes.data, ...localOnly];
+    }
     
     if (settingsRes.data) {
       const eng = settingsRes.data.find(s => s.key === 'engine');
@@ -782,7 +791,7 @@ function moveToBin(type, data) {
   saveLocalState();
 }
 
-async function dbSave(table, action, data, matchField, retries = 2) {
+async function dbSave(table, action, data, matchField, retries = 1) {
   if (useSupabase && sb) {
     let success = false;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -3801,12 +3810,16 @@ async function executeCSVImport() {
   const progressEl = document.getElementById("import-progress");
   const statsEl = document.getElementById("import-stats");
   window.isBulkScanning = true;
+  
+  const newScans = [];     // collect all new scans for batch DB insert
+  const newTrays = [];     // collect all newly created trays
+  const updatedTrays = new Map(); // trayId -> tray ref (for batch sticks update)
 
   for (let i = 1; i < lines.length; i++) {
-    if (i % 15 === 0) {
+    if (i % 100 === 0) {
       progressEl.textContent = `Processing row ${i} of ${lines.length - 1}...`;
       statsEl.textContent = `${totalAdded} sticks added, ${skipped} skipped`;
-      await new Promise(r => setTimeout(r, 5)); 
+      await new Promise(r => setTimeout(r, 2)); 
     }
 
     const cols = parseLine(lines[i]);
@@ -3834,13 +3847,17 @@ async function executeCSVImport() {
     let currentTray = state.trays.find(t => t.projectId == project.id && t.trayNum == targetTrayNum);
     
     if (currentTray) {
-      if (currentTray.partNumber.toUpperCase() !== partNum) {
-        // Different part - skip or force new assignment
-        const assignment = await assignTray(project.id, session.currentUser.id, classification);
-        currentTray = assignment.isNew ? { ...assignment.tray, sticks: [] } : state.trays.find(t => t.id == assignment.tray.id);
+      if ((currentTray.partNumber || '').toUpperCase() !== partNum) {
+        const assignment = assignTray(project.id, session.currentUser.id, classification);
+        if (!assignment) { skipped++; continue; }
         if (assignment.isNew) {
-           state.trays.push(currentTray);
-           await dbSave('trays', 'insert', currentTray);
+          assignment.tray.sticks = [];
+          state.trays.push(assignment.tray);
+          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
+          newTrays.push(assignment.tray);
+          currentTray = assignment.tray;
+        } else {
+          currentTray = assignment.tray;
         }
       }
     } else {
@@ -3852,7 +3869,7 @@ async function executeCSVImport() {
       };
       state.trays.push(currentTray);
       state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, targetTrayNum);
-      await dbSave('trays', 'insert', currentTray);
+      newTrays.push(currentTray);
     }
 
     let toAdd = (method === "sync") ? Math.max(0, targetTotalQty - currentTray.sticks.length) : targetTotalQty;
@@ -3862,37 +3879,70 @@ async function executeCSVImport() {
       let space = currentTray.capacity - currentTray.sticks.length;
       
       if (space <= 0) {
-        const assignment = await assignTray(project.id, session.currentUser.id, classification);
+        const assignment = assignTray(project.id, session.currentUser.id, classification);
         if (!assignment) break; 
         if (assignment.isNew) {
-          currentTray = { ...assignment.tray, sticks: [] };
-          state.trays.push(currentTray);
-          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, currentTray.trayNum);
-          await dbSave('trays', 'insert', currentTray);
+          assignment.tray.sticks = [];
+          state.trays.push(assignment.tray);
+          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
+          newTrays.push(assignment.tray);
+          currentTray = assignment.tray;
         } else {
-          currentTray = state.trays.find(t => t.id == assignment.tray.id);
+          currentTray = assignment.tray;
         }
         space = currentTray.capacity - currentTray.sticks.length;
       }
 
       const batch = Math.min(space, toAdd);
-      if (batch > 0) {
-        for (let b = 0; b < batch; b++) {
-          const scanId = generateId('s');
-          const newScan = {
-            id: scanId, projectId: project.id, userId: session.currentUser.id,
-            ts: Date.now() + i + (totalAdded * 0.001), scan: scanRaw,
-            result: { ...classification, method: "csv_import" },
-            trayId: currentTray.id
-          };
-          currentTray.sticks.push(scanId);
-          state.scans.unshift(newScan);
-          await dbSave('scans', 'insert', newScan);
+      for (let b = 0; b < batch; b++) {
+        const scanId = generateId('s');
+        const newScan = {
+          id: scanId, projectId: project.id, userId: session.currentUser.id,
+          ts: Date.now() + totalAdded, scan: scanRaw,
+          result: { ...classification, method: "csv_import" },
+          trayId: currentTray.id
+        };
+        currentTray.sticks.push(scanId);
+        state.scans.push(newScan);
+        newScans.push(newScan);
+      }
+      updatedTrays.set(currentTray.id, currentTray);
+      totalAdded += batch;
+      toAdd -= batch;
+    }
+  }
+  
+  // Save all local state at once
+  saveLocalState();
+  
+  progressEl.textContent = 'Syncing to database...';
+  statsEl.textContent = `${totalAdded} sticks processed locally. Uploading in batches...`;
+  await new Promise(r => setTimeout(r, 50));
+  
+  // Batch DB writes — insert trays and scans in chunks of 500
+  if (useSupabase && sb) {
+    try {
+      // Insert new trays in batch
+      if (newTrays.length > 0) {
+        for (let c = 0; c < newTrays.length; c += 500) {
+          const chunk = newTrays.slice(c, c + 500);
+          await sb.from('trays').upsert(chunk);
         }
-        await dbSave('trays', 'update', { updates: { sticks: currentTray.sticks }, id: currentTray.id }, 'id');
-        totalAdded += batch;
-        toAdd -= batch;
-      } else break;
+      }
+      // Insert scans in batches
+      for (let c = 0; c < newScans.length; c += 500) {
+        const chunk = newScans.slice(c, c + 500);
+        await sb.from('scans').upsert(chunk);
+        progressEl.textContent = `Uploading scans... ${Math.min(c + 500, newScans.length)}/${newScans.length}`;
+        await new Promise(r => setTimeout(r, 10));
+      }
+      // Update sticks arrays for existing trays
+      for (const [trayId, tray] of updatedTrays) {
+        await sb.from('trays').update({ sticks: tray.sticks }).eq('id', trayId);
+      }
+    } catch (e) {
+      console.error("CSV batch DB write error:", e);
+      showToast("Some data may not have synced to DB — saved locally", "#FFD700");
     }
   }
   
