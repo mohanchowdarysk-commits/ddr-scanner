@@ -126,11 +126,11 @@
     width: 100%; max-width: 1400px; margin: 0 auto; padding: 0.75rem 2rem;
     display: flex; align-items: center; gap: 1rem;
   }
-  .nav { flex: 1; display: flex; gap: 0.25rem; justify-content: center; }
+  .nav { display: flex; gap: 0.125rem; }
   .nav button {
-    background: transparent; color: #888; font-weight: 700; font-size: 0.9rem;
-    padding: 0.6rem 1.2rem; border-radius: 0.5rem; border: 0; letter-spacing: 0.02em;
-    min-height: 2.75rem;
+    background: transparent; color: #888; font-weight: 700; font-size: 0.85rem;
+    padding: 0.5rem 1rem; border-radius: 0.5rem; border: 0; letter-spacing: 0.02em;
+    min-height: 2.5rem; white-space: nowrap;
   }
   .nav button.active { background: #FFD700; color: #1a1a2e; }
   .nav button:hover:not(.active) { color: #fff; }
@@ -324,8 +324,9 @@
 
   @media (max-width: 768px) {
     .container { padding: 1rem; }
-    .topbar-inner { flex-wrap: wrap; padding: 1rem; }
-    .nav { order: 3; width: 100%; flex-wrap: wrap; margin-top: 1rem; }
+    .topbar-inner { flex-wrap: wrap; padding: 0.75rem 1rem; }
+    .nav { flex-wrap: wrap; gap: 0.125rem; }
+    .nav button { padding: 0.4rem 0.75rem; font-size: 0.8rem; min-height: 2rem; }
     .proj-grid { grid-template-columns: 1fr; }
     .history-row { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
     .history-head { display: none; }
@@ -428,7 +429,7 @@ function saveLocalState() {
       // but DO NOT modify the active 'state.scans' in memory.
       const stateToSave = { ...state };
       if (stateToSave.scans && stateToSave.scans.length > 2000) {
-        stateToSave.scans = stateToSave.scans.slice(0, 2000);
+        stateToSave.scans = stateToSave.scans.slice(0, 200);
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave)); 
     } catch (e) { 
@@ -592,7 +593,13 @@ function setupRealtime() {
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
     const modal = document.getElementById('modal');
     if (modal && modal.classList.contains('show')) return;
-    render();
+    if (_scanBusy || window.isBulkScanning) return;
+    // Lightweight update: only update the current page content, not the full shell
+    if (session.page === 'scanner') { updateRecentScans(); }
+    else if (session.page === 'trays') { renderTraysPage(); }
+    else if (session.page === 'master') { renderMasterPage(); }
+    else if (session.page === 'history') { renderHistoryPage(); }
+    else if (session.page === 'summary') { renderSummaryPage(); }
   };
   
   // Scans & Trays: Only listen to the active project to save egress
@@ -601,6 +608,8 @@ function setupRealtime() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans', filter: `projectId=eq.${pid}` }, payload => {
         if (!state.scans.find(s => s.id == payload.new.id)) {
           state.scans.unshift(payload.new);
+          // Cap at 500 to prevent memory bloat
+          if (state.scans.length > 500) state.scans = state.scans.slice(0, 500);
           if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
         }
       })
@@ -658,16 +667,15 @@ function setupRealtime() {
       }
     });
     
-  // Periodic sync — only needed as fallback when realtime drops
+  // Local-only cleanup tasks — NO Supabase queries
   setInterval(() => { 
     flushOfflineQueue(); 
     cleanupEmptyTrays();
     enforceCapacity();
   }, 60000);
   
-  // Full DB sync every 5 minutes — realtime handles live updates between syncs
-  setInterval(() => { fetchDataSilent(); }, 300000);
-  
+  // NO periodic fetchDataSilent — realtime handles everything
+  // Only flush offline queue on initial connect
   setTimeout(() => { flushOfflineQueue(); enforceCapacity(); }, 3000);
 }
 
@@ -676,7 +684,7 @@ window.isBulkScanning = false;
 async function fetchProjectData(pid) {
   if (!sb || !pid) return;
   const [scansRes, traysRes] = await Promise.all([
-    sb.from('scans').select('*').eq('projectId', pid).order('ts', { ascending: false }).limit(200),
+    sb.from('scans').select('id,projectId,userId,ts,result,trayId,scan').eq('projectId', pid).order('ts', { ascending: false }).limit(50),
     sb.from('trays').select('*').eq('projectId', pid).limit(5000)
   ]);
   if (scansRes.data) state.scans = scansRes.data;
@@ -684,35 +692,7 @@ async function fetchProjectData(pid) {
   updateTrayCounters();
 }
 
-async function fetchDataSilent() {
-  if (!sb || window.isBulkScanning || !session.currentProjectId) return;
-  try {
-    const pid = session.currentProjectId;
-    const [projectsRes, traysRes] = await Promise.all([
-      sb.from('projects').select('*'),
-      sb.from('trays').select('*').eq('projectId', pid).limit(5000)
-    ]);
-    
-    if (projectsRes.data) state.projects = projectsRes.data;
-    if (traysRes.data) {
-      const dbTrayMap = new Map(traysRes.data.map(t => [t.id, t]));
-      const localOnly = state.trays.filter(t => !dbTrayMap.has(t.id));
-      state.trays = [...traysRes.data, ...localOnly];
-    }
-    
-    
-    updateTrayCounters();
-    
-    // Only re-render if user is NOT typing AND no modal is open
-    const active = document.activeElement;
-    const modal = document.getElementById('modal');
-    const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
-    const isModalOpen = modal && modal.classList.contains('show');
-    if (!isTyping && !isModalOpen && !_scanBusy) {
-      render();
-    }
-  } catch (err) { console.warn("Realtime refresh failed:", err); }
-}
+// fetchDataSilent removed — realtime handles all live sync. No periodic polling.
 
 // Helper to save to Supabase OR localStorage with retry
 /* ═══ OFFLINE QUEUE — queues failed DB operations for later sync ═══ */
@@ -1706,18 +1686,43 @@ function renderApp() {
 
   document.getElementById("root").innerHTML = `
     <div class="topbar">
-      <div class="topbar-inner">
-        <button onclick="switchProject()" style="display: flex; align-items: center; gap: 0.75rem; border: 0; background: transparent; padding: 0;">
-          <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; background: linear-gradient(135deg, #FFD700, #FF8C00); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.25rem; color: #1a1a2e;">D</div>
+      <div class="topbar-inner" style="flex-wrap: nowrap; gap: 1rem;">
+        <button onclick="switchProject()" style="display: flex; align-items: center; gap: 0.75rem; border: 0; background: transparent; padding: 0; flex-shrink: 0;">
+          <div style="width: 2.25rem; height: 2.25rem; border-radius: 0.625rem; background: linear-gradient(135deg, #FFD700, #FF8C00); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; color: #1a1a2e;">D</div>
           <div style="text-align: left;">
-            <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.05em; text-transform: uppercase;">Project</div>
-            <div style="font-size: 0.95rem; font-weight: 700; color: #FFD700; display: flex; align-items: center; gap: 0.5rem;">
+            <div style="font-size: 0.65rem; color: #888; letter-spacing: 0.05em; text-transform: uppercase;">Project</div>
+            <div style="font-size: 0.9rem; font-weight: 700; color: #FFD700; display: flex; align-items: center; gap: 0.5rem;">
               ${escapeHtml(project.name)}
-              <span class="badge badge-${project.mode}">${project.mode.toUpperCase()}</span>
+              <span class="badge badge-${project.mode}" style="font-size: 0.6rem;">${project.mode.toUpperCase()}</span>
             </div>
           </div>
         </button>
-        <nav class="nav">
+        <div style="flex: 1;"></div>
+        <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative; min-height: 2rem; flex-shrink: 0;">
+          <span class="engine-dot" style="background: ${state.engine === 'rule' ? '#888' : '#4fa3ff'};"></span>
+          <span style="font-size: 0.8rem; color: ${state.engine === 'rule' ? '#888' : '#4fa3ff'}; font-weight: 700;">${state.engine.toUpperCase()}</span>
+          <span style="font-size: 0.7rem; color: #666;">▾</span>
+          <div id="engine-popup" class="engine-popup" style="display: none;" onclick="event.stopPropagation()"></div>
+        </button>
+        ${useSupabase ? `
+          <div title="Cloud Sync Active" style="display: flex; align-items: center; gap: 4px; color: #3ed685; font-size: 0.6rem; font-weight: 800; background: rgba(62,214,133,0.1); padding: 3px 7px; border-radius: 4px; flex-shrink: 0;">
+            <span style="width: 5px; height: 5px; background: #3ed685; border-radius: 50%; animation: pulse 2s infinite;"></span>SYNC
+          </div>
+        ` : `
+          <div title="Using Local Storage Only" style="display: flex; align-items: center; gap: 4px; color: #ffaa00; font-size: 0.6rem; font-weight: 800; background: rgba(255,170,0,0.1); padding: 3px 7px; border-radius: 4px; flex-shrink: 0;">OFFLINE</div>
+        `}
+        <div class="flex items-center gap-8" style="flex-shrink: 0;">
+          <div class="avatar" style="background: ${user.color}; width: 2rem; height: 2rem; font-size: 0.85rem;">${user.name.charAt(0).toUpperCase()}</div>
+          <div style="display: flex; flex-direction: column; line-height: 1.1;">
+            <span style="font-size: 0.85rem; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
+            <span style="font-size: 0.65rem; color: #888; text-transform: uppercase;">${user.role}</span>
+          </div>
+          <button class="btn-ghost" style="font-size: 0.75rem; padding: 0.375rem 0.625rem; min-height: 1.75rem; margin-left: 0.25rem;" onclick="logout()">Sign out</button>
+        </div>
+      </div>
+      
+      <div style="max-width: 1400px; margin: 0 auto; padding: 0 2rem 0.625rem; display: flex; align-items: center; gap: 0.75rem;">
+        <nav class="nav" style="flex: 0 0 auto; justify-content: flex-start; gap: 0.125rem;">
           <button class="${session.page === 'scanner' ? 'active' : ''}" onclick="setPage('scanner')">Scanner</button>
           <button class="${session.page === 'trays' ? 'active' : ''}" onclick="setPage('trays')">Trays</button>
           <button class="${session.page === 'history' ? 'active' : ''}" onclick="setPage('history')">History</button>
@@ -1725,34 +1730,10 @@ function renderApp() {
           <button class="${session.page === 'summary' ? 'active' : ''}" onclick="setPage('summary')">Summary</button>
           ${(user.role === "admin" || user.role === "supervisor") ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
         </nav>
-        <div style="flex: 1; margin: 0 1rem; max-width: 28rem; position: relative;">
-          <input type="text" id="global-search" placeholder="🔍 Search part, tray #, brand, user..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
-                 style="width: 100%; padding: 0.7rem 2.5rem 0.7rem 1rem; font-size: 1rem; font-weight: 600; border-radius: 0.625rem; background: ${globalSearchQuery ? '#1a1a22' : '#1a1a22'}; border: 2px solid ${globalSearchQuery ? '#FFD700' : '#2a2a35'}; color: #fff; min-height: 2.75rem; transition: border-color 0.15s;" onfocus="this.style.borderColor='#FFD700'" onblur="if(!this.value)this.style.borderColor='#2a2a35'" />
-          ${globalSearchQuery ? `<button onclick="setGlobalSearch(''); document.getElementById('global-search').value=''; document.getElementById('global-search').style.borderColor='#2a2a35';" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #2a2a35; border: none; color: #888; width: 1.75rem; height: 1.75rem; border-radius: 50%; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center;">✕</button>` : ''}
-        </div>
-        <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative; min-height: 2.5rem;">
-          <span class="engine-dot" style="background: ${state.engine === 'rule' ? '#888' : '#4fa3ff'};"></span>
-          <span style="font-size: 0.85rem; color: ${state.engine === 'rule' ? '#888' : '#4fa3ff'}; font-weight: 700; letter-spacing: 0.05em;">${state.engine.toUpperCase()}</span>
-          <span style="font-size: 0.75rem; color: #666;">▾</span>
-          <div id="engine-popup" class="engine-popup" style="display: none;" onclick="event.stopPropagation()"></div>
-        </button>
-        <div class="flex items-center gap-12">
-          ${useSupabase ? `
-            <div title="Cloud Sync Active" style="display: flex; align-items: center; gap: 4px; color: #3ed685; font-size: 0.65rem; font-weight: 800; background: rgba(62,214,133,0.1); padding: 4px 8px; border-radius: 4px; letter-spacing: 0.05em;">
-              <span style="width: 6px; height: 6px; background: #3ed685; border-radius: 50%; animation: pulse 2s infinite;"></span>
-              SYNC
-            </div>
-          ` : `
-            <div title="Using Local Storage Only" style="display: flex; align-items: center; gap: 4px; color: #ffaa00; font-size: 0.65rem; font-weight: 800; background: rgba(255,170,0,0.1); padding: 4px 8px; border-radius: 4px; letter-spacing: 0.05em;">
-              OFFLINE
-            </div>
-          `}
-          <div class="avatar" style="background: ${user.color}; width: 2.5rem; height: 2.5rem; font-size: 1rem;">${user.name.charAt(0).toUpperCase()}</div>
-          <div style="display: flex; flex-direction: column; line-height: 1.1;">
-            <span style="font-size: 0.95rem; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
-            <span style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">${user.role}</span>
-          </div>
-          <button class="btn-ghost" style="font-size: 0.85rem; padding: 0.5rem 0.75rem; min-height: 2.25rem; margin-left: 0.25rem;" onclick="logout()">Sign out</button>
+        <div style="flex: 1; position: relative; max-width: 32rem;">
+          <input type="text" id="global-search" placeholder="🔍 Search part number, tray #, brand, owner..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
+                 style="width: 100%; padding: 0.6rem 2.5rem 0.6rem 1rem; font-size: 0.95rem; font-weight: 600; border-radius: 0.5rem; background: #15151c; border: 2px solid ${globalSearchQuery ? '#FFD700' : '#2a2a35'}; color: #FFD700; min-height: 2.5rem; -webkit-text-fill-color: #FFD700;" onfocus="this.style.borderColor='#FFD700'" onblur="if(!this.value)this.style.borderColor='#2a2a35'" />
+          ${globalSearchQuery ? `<button onclick="setGlobalSearch(''); document.getElementById('global-search').value=''; document.getElementById('global-search').style.borderColor='#2a2a35';" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #2a2a35; border: none; color: #888; width: 1.5rem; height: 1.5rem; border-radius: 50%; cursor: pointer; font-size: 0.8rem; display: flex; align-items: center; justify-content: center;">✕</button>` : ''}
         </div>
       </div>
     </div>
@@ -2094,22 +2075,32 @@ async function toggleTrayExpand(trayId) {
   renderTraysPage();
 }
 
-function setTrayFilter(f) { trayFilter = f; renderTraysPage(); }
+function setTrayFilter(f) { trayFilter = f; trayPage = 0; renderTraysPage(); }
+let trayPage = 0;
+const TRAYS_PER_PAGE = 48;
 
 function renderTraysPage() {
   const q = globalSearchQuery.toLowerCase().trim();
   const project = state.projects.find(p => p.id == session.currentProjectId);
   const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  
+  // Build user lookup map ONCE
+  const userMap = new Map(state.users.map(u => [u.id, u]));
+  
   const visible = projectTrays.filter(t => {
     if (trayFilter === "mine" && project.mode === "separate" && t.ownerUserId != session.currentUser.id) return false;
     if (trayFilter === "full" && t.sticks.length < t.capacity) return false;
     if (trayFilter === "active" && t.sticks.length >= t.capacity) return false;
     if (q) {
-      const owner = state.users.find(u => u.id == t.ownerUserId || u.id == t.createdBy);
+      const owner = userMap.get(t.ownerUserId) || userMap.get(t.createdBy);
       if (!matchesSearch(q, t.partNumber, t.trayNum, t.brand, t.generation, owner?.name, t.label)) return false;
     }
     return true;
   }).sort((a, b) => a.trayNum - b.trayNum);
+
+  const totalPages = Math.ceil(visible.length / TRAYS_PER_PAGE);
+  if (trayPage >= totalPages) trayPage = Math.max(0, totalPages - 1);
+  const pageTrays = visible.slice(trayPage * TRAYS_PER_PAGE, (trayPage + 1) * TRAYS_PER_PAGE);
 
   const filterBtns = [
     { id: "all", label: "All" },
@@ -2117,6 +2108,16 @@ function renderTraysPage() {
     { id: "active", label: "Active" },
     { id: "full", label: "Full" },
   ];
+
+  const pageNav = totalPages > 1 ? `
+    <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+      <button onclick="trayPage=0; renderTraysPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${trayPage === 0 ? 'disabled' : ''}>«</button>
+      <button onclick="trayPage=Math.max(0,trayPage-1); renderTraysPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${trayPage === 0 ? 'disabled' : ''}>‹ Prev</button>
+      <span style="color: #888; font-size: 0.85rem; padding: 0 0.75rem;">Page <b style="color: #FFD700;">${trayPage + 1}</b> of ${totalPages}</span>
+      <button onclick="trayPage=Math.min(${totalPages-1},trayPage+1); renderTraysPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${trayPage >= totalPages - 1 ? 'disabled' : ''}>Next ›</button>
+      <button onclick="trayPage=${totalPages-1}; renderTraysPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${trayPage >= totalPages - 1 ? 'disabled' : ''}>»</button>
+    </div>
+  ` : '';
 
   document.getElementById("page-content").innerHTML = `
     <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
@@ -2127,8 +2128,8 @@ function renderTraysPage() {
     </div>
     ${visible.length === 0 ? `<div class="empty">No trays match this filter</div>` : `
       <div class="tray-grid">
-        ${visible.map(t => {
-          const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+        ${pageTrays.map(t => {
+          const owner = userMap.get(t.ownerUserId) || userMap.get(t.createdBy);
           const pct = Math.min(100, (t.sticks.length / t.capacity) * 100);
           const isFull = t.sticks.length >= t.capacity;
           const brandStr = (typeof t.brand === 'string' && t.brand && BRAND_META[t.brand]) ? t.brand : 'Unknown';
@@ -2208,6 +2209,7 @@ function renderTraysPage() {
             </div>`;
         }).join("")}
       </div>
+      ${pageNav}
     `}
   `;
 }
@@ -3124,16 +3126,18 @@ function renderHistoryPage() {
   const project = state.projects.find(p => p.id == session.currentProjectId);
   const projectScans = state.scans.filter(s => s.projectId == project.id);
   const q = globalSearchQuery.toLowerCase().trim();
+  const userMap = new Map(state.users.map(u => [u.id, u]));
+  const trayMap = new Map(state.trays.map(t => [t.id, t]));
   const filtered = (historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId == historyFilter)).filter(s => {
     if (!q) return true;
-    const tray = state.trays.find(t => t.id == s.trayId);
-    const user = state.users.find(u => u.id == s.userId);
+    const tray = trayMap.get(s.trayId);
+    const user = userMap.get(s.userId);
     return matchesSearch(q, s.result?.partNumber, tray?.trayNum, s.result?.brand, s.result?.generation, s.result?.serial, user?.name, s.scan);
   });
   
   document.getElementById("page-content").innerHTML = `
     <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
-      <h1 class="h" style="margin-bottom: 0;">History · ${getProjectStickCount(project.id)} sticks</h1>
+      <h1 class="h" style="margin-bottom: 0;">History · ${getProjectStickCount(project.id)} sticks${q ? ` <span style="font-size: 0.8rem; color: #FFD700; font-weight: 400;">· ${filtered.length} matching</span>` : ''}</h1>
       <div class="flex gap-12">
         <button class="btn-ghost" style="font-size: 0.9rem; padding: 0.6rem 1.25rem; min-height: 2.5rem;" onclick="exportCSV()">📥 Export CSV</button>
         <select onchange="setHistoryFilter(this.value)" style="background: #1a1a22; color: #fff; border: 1px solid #2a2a35; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.9rem; min-height: 2.5rem; width: auto;">
@@ -3152,9 +3156,9 @@ function renderHistoryPage() {
         <div class="history-row history-head">
           <div>Time</div><div>Part Number</div><div>Serial</div><div>Brand</div><div>Gen</div><div>Tray</div><div>User</div>
         </div>
-        ${filtered.slice(0, 100).map(s => {
-          const u = state.users.find(u2 => u2.id == s.userId);
-          const tray = state.trays.find(t => t.id == s.trayId);
+        ${filtered.slice(0, 200).map(s => {
+          const u = userMap.get(s.userId);
+          const tray = trayMap.get(s.trayId);
           return `
             <div class="history-row">
               <div style="color: #888;">${new Date(s.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
@@ -3228,9 +3232,19 @@ function renderMasterPage() {
     </div>`;
   }).join('');
 
+  // Pre-compute per-user stats
+  const userStickMap = {};
+  const userTrayMap = {};
+  projectTrays.forEach(t => {
+    const uid = t.ownerUserId || t.createdBy;
+    if (!userStickMap[uid]) { userStickMap[uid] = 0; userTrayMap[uid] = 0; }
+    userStickMap[uid] += t.sticks?.length || 0;
+    userTrayMap[uid]++;
+  });
+
   const userCards = members.map(u => {
-    const uSticks = projectTrays.filter(t => t.createdBy == u.id || t.ownerUserId == u.id).reduce((sum, t) => sum + t.sticks.length, 0);
-    const uTrays = projectTrays.filter(t => t.createdBy == u.id || t.ownerUserId == u.id).length;
+    const uSticks = userStickMap[u.id] || 0;
+    const uTrays = userTrayMap[u.id] || 0;
     return `<div style="background: #1a1a22; border-radius: 0.75rem; padding: 1rem 1.25rem; min-width: 10rem; border-left: 4px solid ${u.color};">
       <div class="flex items-center gap-8" style="margin-bottom: 0.5rem;">
         <div class="avatar avatar-sm" style="background: ${u.color};">${u.name.charAt(0).toUpperCase()}</div>
@@ -3245,15 +3259,22 @@ function renderMasterPage() {
   }).join('');
 
   const q = globalSearchQuery.toLowerCase().trim();
+  const userMap = new Map(state.users.map(u => [u.id, u]));
   const filteredTrays = masterFilter === "all" ? projectTrays : projectTrays.filter(t => t.createdBy == masterFilter || t.ownerUserId == masterFilter);
   const searchedTrays = filteredTrays.filter(t => {
     if (!q) return true;
-    const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+    const owner = userMap.get(t.ownerUserId) || userMap.get(t.createdBy);
     return matchesSearch(q, t.partNumber, t.trayNum, t.brand, t.generation, owner?.name);
   });
 
-  const trayRows = searchedTrays.map(t => {
-    const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+  const masterPageSize = 60;
+  const masterTotalPages = Math.ceil(searchedTrays.length / masterPageSize);
+  if (!window._masterPage) window._masterPage = 0;
+  if (window._masterPage >= masterTotalPages) window._masterPage = Math.max(0, masterTotalPages - 1);
+  const masterPageTrays = searchedTrays.slice(window._masterPage * masterPageSize, (window._masterPage + 1) * masterPageSize);
+
+  const trayRows = masterPageTrays.map(t => {
+    const owner = userMap.get(t.ownerUserId) || userMap.get(t.createdBy);
     const bm = BRAND_META[t.brand] || BRAND_META.Unknown;
     const gm = GEN_META[t.generation] || GEN_META.Unknown;
     const pct = (t.sticks.length / t.capacity * 100);
@@ -3305,6 +3326,13 @@ function renderMasterPage() {
         </div>
         ${trayRows || '<div style="padding: 2rem; text-align: center; color: #666;">No trays yet</div>'}
       </div>
+      ${masterTotalPages > 1 ? `
+        <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+          <button onclick="window._masterPage=Math.max(0,window._masterPage-1); renderMasterPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${window._masterPage === 0 ? 'disabled' : ''}>‹ Prev</button>
+          <span style="color: #888; font-size: 0.85rem;">Page <b style="color: #FFD700;">${(window._masterPage||0) + 1}</b> of ${masterTotalPages}</span>
+          <button onclick="window._masterPage=Math.min(${masterTotalPages-1},(window._masterPage||0)+1); renderMasterPage();" class="btn-ghost" style="padding: 0.4rem 0.75rem; min-height: 2rem; font-size: 0.8rem;" ${(window._masterPage||0) >= masterTotalPages - 1 ? 'disabled' : ''}>Next ›</button>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -3722,7 +3750,7 @@ async function doDeduplicateProject() {
   let allScans = [];
   if (useSupabase && sb) {
     // Fetch up to 100k scans for this project
-    const { data, error } = await sb.from('scans').select('*').eq('projectId', pid).limit(100000);
+    const { data, error } = await sb.from('scans').select('id,trayId,result').eq('projectId', pid).limit(100000);
     if (error) { showToast("Error fetching scans: " + error.message, "#ff4444"); return; }
     allScans = data;
   } else {
@@ -4710,7 +4738,14 @@ function matchesSearch(q, ...fields) {
   return terms.every(term => haystack.includes(term));
 }
 
-function setPage(p) { session.page = p; globalSearchQuery = ""; render(); }
+let _renderTimer = null;
+function setPage(p) { 
+  session.page = p; 
+  trayPage = 0;
+  window._masterPage = 0;
+  clearTimeout(_renderTimer);
+  _renderTimer = setTimeout(() => render(), 16); 
+}
 function switchProject() { session.currentProjectId = null; session.page = "projects"; globalSearchQuery = ""; render(); }
 
 function toggleEnginePopup(ev) {
