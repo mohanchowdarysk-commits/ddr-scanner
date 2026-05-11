@@ -331,6 +331,12 @@
     .history-head { display: none; }
     .scanner-layout { grid-template-columns: 1fr !important; }
   }
+
+  @keyframes pulse {
+    0% { opacity: 0.3; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.1); }
+    100% { opacity: 0.3; transform: scale(0.9); }
+  }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -413,39 +419,48 @@ function loadLocalState() {
     return { ...JSON.parse(JSON.stringify(DEFAULT_STATE)), ...JSON.parse(raw) };
   } catch { return JSON.parse(JSON.stringify(DEFAULT_STATE)); }
 }
+let _saveTimeout = null;
 function saveLocalState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { console.warn("Save failed:", e); }
+  if (_saveTimeout) return;
+  _saveTimeout = setTimeout(() => {
+    try { 
+      // Only persist a subset of scans to localStorage to stay within the 5MB limit
+      // but DO NOT modify the active 'state.scans' in memory.
+      const stateToSave = { ...state };
+      if (stateToSave.scans && stateToSave.scans.length > 2000) {
+        stateToSave.scans = stateToSave.scans.slice(0, 2000);
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave)); 
+    } catch (e) { 
+      console.warn("Save failed (likely storage limit):", e); 
+    }
+    _saveTimeout = null;
+  }, 1000); // Debounce saves
 }
 
 async function initSupabaseState() {
+  window.isCloudSyncing = true;
+  // LOCAL-FIRST: Load everything from localStorage instantly
+  state = loadLocalState();
+  stateLoaded = true;
+  render();
+
   if (!sb) {
-    // Supabase not available — fall back to localStorage
-    console.warn("Supabase not available, using localStorage");
-    state = loadLocalState();
+    console.warn("Supabase not available, staying in Offline Mode");
     useSupabase = false;
-    stateLoaded = true;
-    render();
     return;
   }
+  
   try {
-    const [usersRes, projectsRes, scansRes, traysRes, settingsRes] = await Promise.all([
+    // 1. Fetch meta-data in background
+    const [usersRes, projectsRes, settingsRes] = await Promise.all([
       sb.from('users').select('*'),
       sb.from('projects').select('*'),
-      sb.from('scans').select('*').order('ts', { ascending: false }).limit(1000),
-      sb.from('trays').select('*'),
       sb.from('settings').select('*')
     ]);
 
-    // Check for errors
-    if (usersRes.error || projectsRes.error) {
-      throw new Error(usersRes.error?.message || projectsRes.error?.message || 'Fetch failed');
-    }
-
     if (usersRes.data) state.users = usersRes.data;
     if (projectsRes.data) state.projects = projectsRes.data;
-    if (scansRes.data) state.scans = scansRes.data;
-    if (traysRes.data) state.trays = traysRes.data;
-    
     if (settingsRes.data) {
       const eng = settingsRes.data.find(s => s.key === 'engine');
       const gk = settingsRes.data.find(s => s.key === 'geminiKey');
@@ -453,18 +468,27 @@ async function initSupabaseState() {
       if (gk) state.geminiKey = gk.value;
     }
 
-    updateTrayCounters();
     useSupabase = true;
-    stateLoaded = true;
+    
+    // 2. If a project was selected, fetch its fresh data from cloud
+    if (session.currentProjectId) {
+      try {
+        const fetchPromise = fetchProjectData(session.currentProjectId);
+        const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), 5000));
+        await Promise.race([fetchPromise, timeoutPromise]);
+      } catch (e) {
+        console.warn("Cloud data fetch background failed/timed out:", e);
+      }
+    }
+    
     setupRealtime();
-    render();
+    window.isCloudSyncing = false;
+    render(); // Update UI with fresh cloud data
   } catch (err) {
-    console.warn("Supabase fetch failed, falling back to localStorage:", err);
-    state = loadLocalState();
+    console.warn("Supabase background sync failed:", err);
+    window.isCloudSyncing = false;
     useSupabase = false;
-    stateLoaded = true;
     render();
-    setTimeout(() => showToast(`Supabase Error: ${err.message}. Using Offline Mode.`, "#ff4444"), 1000);
   }
 }
 
@@ -473,11 +497,14 @@ function getProjectStickCount(projectId) {
   return trays.reduce((sum, t) => sum + (t.sticks?.length || 0), 0);
 }
 
-function updateTrayCounters() {
+function updateTrayCounters(allowDbSync = false) {
   state.trayCounters = {};
   const trayMap = {};
   const mergedTrays = [];
   let changed = false;
+  
+  // Guard against concurrent modifications during bulk ops
+  if (window.isBulkScanning) return;
   
   // 1. Clean and normalize tray numbers
   for (const t of state.trays) {
@@ -516,7 +543,7 @@ function updateTrayCounters() {
         session.lastScan.trayId = survivingTray.id;
       }
       
-      if (useSupabase && sb) {
+      if (allowDbSync && useSupabase && sb) {
         sb.from('scans').update({ trayId: survivingTray.id }).eq('trayId', removedTrayId).then();
         sb.from('trays').update({ sticks: survivingTray.sticks }).eq('id', survivingTray.id).then();
         sb.from('trays').delete().eq('id', removedTrayId).then();
@@ -551,49 +578,61 @@ function updateTrayCounters() {
 function setupRealtime() {
   if (!sb) return;
   
-  const channel = sb.channel('db-changes');
+  // Clean up existing channel if any
+  if (window._rtChannel) {
+    sb.removeChannel(window._rtChannel);
+  }
+
+  const pid = session.currentProjectId;
+  const channel = sb.channel(`db-changes-${pid || 'global'}`);
+  window._rtChannel = channel;
   
-  // Safe rendering logic to avoid nuking inputs while typing
   const safeRender = () => {
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
-    // Don't re-render if modal is open (user might be editing)
     const modal = document.getElementById('modal');
     if (modal && modal.classList.contains('show')) return;
     render();
   };
   
+  // Scans & Trays: Only listen to the active project to save egress
+  if (pid) {
+    channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans', filter: `projectId=eq.${pid}` }, payload => {
+        if (!state.scans.find(s => s.id == payload.new.id)) {
+          state.scans.unshift(payload.new);
+          if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'scans', filter: `projectId=eq.${pid}` }, payload => {
+        state.scans = state.scans.filter(s => s.id != payload.old.id);
+        safeRender();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays', filter: `projectId=eq.${pid}` }, payload => {
+        if (!state.trays.find(t => t.id == payload.new.id)) {
+          state.trays.push(payload.new);
+          updateTrayCounters();
+          if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trays', filter: `projectId=eq.${pid}` }, payload => {
+        if (window.isBulkScanning) return;
+        const idx = state.trays.findIndex(t => t.id == payload.new.id);
+        if (idx !== -1) {
+          state.trays[idx] = payload.new;
+          updateTrayCounters(false);
+          if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'trays', filter: `projectId=eq.${pid}` }, payload => {
+        state.trays = state.trays.filter(t => t.id != payload.old.id);
+        updateTrayCounters();
+        safeRender();
+      });
+  }
+
+  // Projects & Users: Global meta changes
   channel
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scans' }, payload => {
-      if (!state.scans.find(s => s.id == payload.new.id)) {
-        state.scans.unshift(payload.new);
-        if (session.page === 'scanner' || session.page === 'history' || session.page === 'master') safeRender();
-      }
-    })
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'scans' }, payload => {
-      state.scans = state.scans.filter(s => s.id != payload.old.id);
-      safeRender();
-    })
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trays' }, payload => {
-      if (!state.trays.find(t => t.id == payload.new.id)) {
-        state.trays.push(payload.new);
-        updateTrayCounters();
-        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
-      }
-    })
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trays' }, payload => {
-      const idx = state.trays.findIndex(t => t.id == payload.new.id);
-      if (idx !== -1) {
-        state.trays[idx] = payload.new;
-        updateTrayCounters();
-        if (session.page === 'scanner' || session.page === 'trays' || session.page === 'master') safeRender();
-      }
-    })
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'trays' }, payload => {
-      state.trays = state.trays.filter(t => t.id != payload.old.id);
-      updateTrayCounters();
-      safeRender();
-    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, payload => {
       if (payload.eventType === 'INSERT') {
         if (!state.projects.find(p => p.id == payload.new.id)) state.projects.push(payload.new);
@@ -626,41 +665,41 @@ function setupRealtime() {
     enforceCapacity();
   }, 60000);
   
-  // Full DB sync much less frequently — realtime handles live updates
-  setInterval(() => { fetchDataSilent(); }, 120000);
+  // Full DB sync every 5 minutes — realtime handles live updates between syncs
+  setInterval(() => { fetchDataSilent(); }, 300000);
   
   setTimeout(() => { flushOfflineQueue(); enforceCapacity(); }, 3000);
 }
 
 window.isBulkScanning = false;
 
+async function fetchProjectData(pid) {
+  if (!sb || !pid) return;
+  const [scansRes, traysRes] = await Promise.all([
+    sb.from('scans').select('*').eq('projectId', pid).order('ts', { ascending: false }).limit(200),
+    sb.from('trays').select('*').eq('projectId', pid).limit(5000)
+  ]);
+  if (scansRes.data) state.scans = scansRes.data;
+  if (traysRes.data) state.trays = traysRes.data;
+  updateTrayCounters();
+}
+
 async function fetchDataSilent() {
-  if (!sb || window.isBulkScanning) return;
+  if (!sb || window.isBulkScanning || !session.currentProjectId) return;
   try {
-    const [projectsRes, traysRes, settingsRes] = await Promise.all([
+    const pid = session.currentProjectId;
+    const [projectsRes, traysRes] = await Promise.all([
       sb.from('projects').select('*'),
-      sb.from('trays').select('*'),
-      sb.from('settings').select('*')
+      sb.from('trays').select('*').eq('projectId', pid).limit(5000)
     ]);
     
     if (projectsRes.data) state.projects = projectsRes.data;
-    if (traysRes.data) state.trays = traysRes.data;
-    
-    // Only fetch recent scans — not the entire history
-    const scansRes = await sb.from('scans').select('*').order('ts', { ascending: false }).limit(500);
-    if (scansRes.data) {
-      // Merge: keep any local scans not in DB result (recently added, not yet synced)
-      const dbIds = new Set(scansRes.data.map(s => s.id));
-      const localOnly = state.scans.filter(s => !dbIds.has(s.id));
-      state.scans = [...scansRes.data, ...localOnly];
+    if (traysRes.data) {
+      const dbTrayMap = new Map(traysRes.data.map(t => [t.id, t]));
+      const localOnly = state.trays.filter(t => !dbTrayMap.has(t.id));
+      state.trays = [...traysRes.data, ...localOnly];
     }
     
-    if (settingsRes.data) {
-      const eng = settingsRes.data.find(s => s.key === 'engine');
-      const gk = settingsRes.data.find(s => s.key === 'geminiKey');
-      if (eng) state.engine = eng.value;
-      if (gk) state.geminiKey = gk.value;
-    }
     
     updateTrayCounters();
     
@@ -713,6 +752,7 @@ async function flushOfflineQueue() {
 }
 
 function cleanupEmptyTrays() {
+  if (window.isBulkScanning) return;
   const emptyTrays = state.trays.filter(t => !t.sticks || t.sticks.length === 0);
   if (emptyTrays.length === 0) return;
   for (const t of emptyTrays) {
@@ -728,6 +768,7 @@ function cleanupEmptyTrays() {
 }
 
 function enforceCapacity() {
+  if (window.isBulkScanning) return;
   let changed = false;
   const overfull = state.trays.filter(t => t.sticks && t.sticks.length > t.capacity);
   for (const tray of overfull) {
@@ -1044,7 +1085,111 @@ function classifyWithRules(scan) {
   else if (brand !== "Unknown") confidence = 0.8;
   else if (generation !== "Unknown") confidence = 0.7;
 
-  return { brand, generation, partNumber, serial, label, confidence, method: "rule" };
+  return { brand, generation, partNumber, serial, label, confidence, method: "rule", description: decodeDDRPartNumber(partNumber, brand, generation) };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DDR PART NUMBER DECODER — extracts specs from manufacturer part numbers
+   ════════════════════════════════════════════════════════════════════════ */
+function decodeDDRPartNumber(pn, brand, gen) {
+  if (!pn || pn.length < 6) return "";
+  const P = pn.toUpperCase();
+  const specs = [];
+  
+  // === CAPACITY ===
+  const capPatterns = [
+    // Micron: MTA{size}ASF — 2G=16GB, 4G=32GB, 1G=8GB, 512M=4GB
+    { re: /(\d+)G(?:72|64|51|48)/i, mult: 8 },
+    // Samsung M393A2K43: A2K=16GB, A4K=32GB, A1K=8GB, A8G=64GB
+    // Common: look for capacity keywords
+    { re: /(\d+)GB/i, mult: 1 },
+    { re: /(\d+)G(?=[A-Z])/i, mult: 1 },
+  ];
+  
+  // Try to decode capacity from common patterns
+  let capacity = '';
+  // Micron MTA pattern: digit before G means capacity encoding
+  const micronCap = P.match(/MTA(\d+)ASF(\d+)G/);
+  if (micronCap) {
+    const sizeCode = parseInt(micronCap[2]);
+    if (sizeCode === 1) capacity = '8GB';
+    else if (sizeCode === 2) capacity = '16GB';
+    else if (sizeCode === 4) capacity = '32GB';
+    else if (sizeCode === 8) capacity = '64GB';
+  }
+  // Samsung M393/M471/M378 pattern
+  const samCap = P.match(/M[34]\d{2}[AB](\d)([KGM])/);
+  if (samCap) {
+    const n = parseInt(samCap[1]);
+    const u = samCap[2];
+    if (u === 'K' || u === 'G') {
+      if (n === 1) capacity = '8GB';
+      else if (n === 2) capacity = '16GB';
+      else if (n === 4) capacity = '32GB';
+      else if (n === 8) capacity = '64GB';
+    }
+  }
+  // SK Hynix HMA/HMT pattern
+  const hynCap = P.match(/HM[ABCT](\d+)/);
+  if (hynCap) {
+    const n = parseInt(hynCap[1]);
+    if (n === 81) capacity = '8GB';
+    else if (n === 82 || n === 84) capacity = '16GB';
+    else if (n === 42) capacity = '32GB';
+    else if (n === 41) capacity = '4GB';
+  }
+  // Kingston pattern: often has capacity in label
+  if (!capacity) {
+    const gbMatch = P.match(/(\d+)GB/i);
+    if (gbMatch) capacity = gbMatch[1] + 'GB';
+  }
+  if (capacity) specs.push(capacity);
+  
+  // === SPEED / FREQUENCY ===
+  const speedPatterns = {
+    '3200': 'DDR4-3200', '2933': 'DDR4-2933', '2666': 'DDR4-2666', '2400': 'DDR4-2400',
+    '2133': 'DDR4-2133', '1866': 'DDR3-1866', '1600': 'DDR3-1600', '1333': 'DDR3-1333',
+    '4800': 'DDR5-4800', '5200': 'DDR5-5200', '5600': 'DDR5-5600', '6400': 'DDR5-6400',
+  };
+  // Look for speed in the part suffix (after the dash)
+  const suffix = P.split('-').pop() || '';
+  // Micron/Hynix encode speed: 2G3=2133, 2G6=2666, 3G2=3200, etc.
+  const speedCode = suffix.match(/^(\d)([A-Z])(\d)/);
+  if (speedCode) {
+    const s = speedCode[1] + speedCode[3]; // e.g. "26" from "2G6" 
+    const mapped = { '21': '2133', '24': '2400', '26': '2666', '29': '2933', '32': '3200', '48': '4800', '52': '5200', '56': '5600' };
+    const freq = mapped[s];
+    if (freq) specs.push(freq + 'MHz');
+  }
+  if (specs.length < 2) {
+    for (const [key, val] of Object.entries(speedPatterns)) {
+      if (P.includes(key)) { specs.push(key + 'MHz'); break; }
+    }
+  }
+  
+  // === TYPE (RDIMM/UDIMM/SODIMM/LRDIMM) ===
+  if (P.includes('PDZ') || P.includes('PD2') || P.includes('PDB') || P.match(/M393/)) specs.push('RDIMM');
+  else if (P.includes('SDZ') || P.includes('SD2') || P.includes('SDB') || P.match(/M471/)) specs.push('SODIMM');
+  else if (P.includes('CDZ') || P.includes('CD2') || P.match(/M386/)) specs.push('LRDIMM');
+  else if (P.includes('TDZ') || P.includes('TD2') || P.match(/M378/)) specs.push('UDIMM');
+  
+  // === ECC ===
+  // 72-bit bus width = ECC, 64-bit = Non-ECC
+  if (P.match(/72/) || P.match(/M393/) || P.match(/M386/)) specs.push('ECC');
+  else if (P.match(/64/) || P.match(/M378/) || P.match(/M471/)) specs.push('Non-ECC');
+  
+  // === RANK ===
+  if (P.includes('2R') || P.includes('DZ') || P.includes('D2') || P.includes('DB')) specs.push('Dual Rank');
+  else if (P.includes('1R') || P.includes('SZ') || P.includes('S2') || P.includes('SB')) specs.push('Single Rank');
+  else if (P.includes('4R') || P.includes('QZ') || P.includes('Q2')) specs.push('Quad Rank');
+  
+  // === VOLTAGE ===
+  if (gen === 'DDR4') specs.push('1.2V');
+  else if (gen === 'DDR5') specs.push('1.1V');
+  else if (gen === 'DDR3' && P.includes('L')) specs.push('1.35V');
+  else if (gen === 'DDR3') specs.push('1.5V');
+  
+  return specs.filter(Boolean).join(' · ');
 }
 
 const CLASSIFIER_PROMPT = `You are a DDR memory module identification expert. Analyze QR scan strings.
@@ -1087,24 +1232,49 @@ async function classify(scan) {
 /* ════════════════════════════════════════════════════════════════════════
    SCAN RESOLVER — finds scan in local state, Supabase, or synthesizes one
    ════════════════════════════════════════════════════════════════════════ */
-async function resolveScan(scanId, tray) {
-  // 1. Check local state
-  let scan = state.scans.find(s => s.id == scanId);
-  if (scan) return scan;
+async function resolveScansBatch(scanIds, tray) {
+  if (!scanIds || scanIds.length === 0) return [];
   
-  // 2. Try Supabase
-  if (useSupabase && sb) {
-    try {
-      const { data, error } = await sb.from('scans').select('*').eq('id', scanId).single();
-      if (!error && data) {
-        state.scans.push(data); // cache locally
-        return data;
-      }
-    } catch (e) { console.warn("resolveScan DB lookup failed:", e); }
+  // 1. Check local state
+  const found = [];
+  const missing = [];
+  for (const id of scanIds) {
+    const s = state.scans.find(sc => sc.id == id);
+    if (s) found.push(s);
+    else missing.push(id);
   }
   
-  // 3. Synthesize from tray data — scan record is truly gone but stick reference exists
-  const synth = {
+  if (missing.length === 0) return found;
+  
+  // 2. Try Supabase in batch
+  if (useSupabase && sb) {
+    try {
+      const { data, error } = await sb.from('scans').select('*').in('id', missing);
+      if (!error && data) {
+        state.scans.push(...data);
+        found.push(...data);
+        const fetchedIds = new Set(data.map(d => d.id));
+        missing.filter(id => !fetchedIds.has(id)).forEach(id => {
+          // Synthesize if still missing
+          const synth = synthesizeScan(id, tray);
+          state.scans.push(synth);
+          found.push(synth);
+        });
+      }
+    } catch (e) { console.warn("resolveScansBatch DB lookup failed:", e); }
+  } else {
+    // offline synthesis
+    missing.forEach(id => {
+      const synth = synthesizeScan(id, tray);
+      state.scans.push(synth);
+      found.push(synth);
+    });
+  }
+  return found;
+}
+
+function synthesizeScan(scanId, tray) {
+  return {
     id: scanId,
     projectId: tray.projectId,
     userId: tray.createdBy || session.currentUser?.id,
@@ -1122,10 +1292,11 @@ async function resolveScan(scanId, tray) {
     trayId: tray.id,
     _synthetic: true
   };
-  state.scans.push(synth);
-  // Persist to DB so future edits/moves on this stick work across sessions
-  await dbSave('scans', 'upsert', synth);
-  return synth;
+}
+
+async function resolveScan(scanId, tray) {
+  const [s] = await resolveScansBatch([scanId], tray);
+  return s;
 }
 
 
@@ -1319,7 +1490,15 @@ function renderProjectGate() {
       <div class="container" style="max-width: 1400px;">
         <div class="flex items-center justify-between" style="margin-bottom: 2rem;">
           <div>
-            <h1 style="font-size: 1.75rem; font-weight: 800; color: #FFD700; letter-spacing: -0.02em; margin: 0;">Choose a project</h1>
+            <h1 style="font-size: 1.75rem; font-weight: 800; color: #FFD700; letter-spacing: -0.02em; margin: 0; display: flex; align-items: center; gap: 0.75rem;">
+              Choose a project
+              ${(useSupabase && window.isCloudSyncing) ? `
+                <div style="display: flex; align-items: center; gap: 8px; color: #3ed685; font-size: 0.7rem; font-weight: 800; background: rgba(62,214,133,0.1); padding: 4px 10px; border-radius: 20px; letter-spacing: 0.05em; border: 1px solid rgba(62,214,133,0.2);">
+                  <span style="width: 6px; height: 6px; background: #3ed685; border-radius: 50%; animation: pulse 1s infinite;"></span>
+                  SYNCING CLOUD...
+                </div>
+              ` : ""}
+            </h1>
             <div style="font-size: 0.95rem; color: #888; margin-top: 0.5rem;">
               Welcome <span style="color: ${u.color}">${escapeHtml(u.name)}</span> · pick a project to begin scanning
             </div>
@@ -1384,9 +1563,17 @@ function renderProjectGate() {
   `;
 }
 
-function selectProject(pid) {
+async function selectProject(pid) {
   session.currentProjectId = pid;
   session.page = "scanner";
+  
+  // Show loading state for selected project data
+  state.trays = [];
+  state.scans = [];
+  render();
+
+  await fetchProjectData(pid);
+  setupRealtime(); // Re-bind realtime to this project only
   render();
 }
 
@@ -1535,11 +1722,13 @@ function renderApp() {
           <button class="${session.page === 'trays' ? 'active' : ''}" onclick="setPage('trays')">Trays</button>
           <button class="${session.page === 'history' ? 'active' : ''}" onclick="setPage('history')">History</button>
           <button class="${session.page === 'master' ? 'active' : ''}" onclick="setPage('master')">Master</button>
+          <button class="${session.page === 'summary' ? 'active' : ''}" onclick="setPage('summary')">Summary</button>
           ${(user.role === "admin" || user.role === "supervisor") ? `<button class="${session.page === 'admin' ? 'active' : ''}" onclick="setPage('admin')">Admin</button>` : ""}
         </nav>
-        <div style="flex: 1; margin: 0 1.5rem; max-width: 20rem;">
-          <input type="text" id="global-search" placeholder="Search Part Number or Tray #..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
-                 style="width: 100%; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 0.625rem; background: #1a1a22; border: 1px solid #2a2a35; color: #fff; min-height: 2.5rem;" />
+        <div style="flex: 1; margin: 0 1rem; max-width: 28rem; position: relative;">
+          <input type="text" id="global-search" placeholder="🔍 Search part, tray #, brand, user..." value="${escapeHtml(globalSearchQuery)}" oninput="setGlobalSearch(this.value)" 
+                 style="width: 100%; padding: 0.7rem 2.5rem 0.7rem 1rem; font-size: 1rem; font-weight: 600; border-radius: 0.625rem; background: ${globalSearchQuery ? '#1a1a22' : '#1a1a22'}; border: 2px solid ${globalSearchQuery ? '#FFD700' : '#2a2a35'}; color: #fff; min-height: 2.75rem; transition: border-color 0.15s;" onfocus="this.style.borderColor='#FFD700'" onblur="if(!this.value)this.style.borderColor='#2a2a35'" />
+          ${globalSearchQuery ? `<button onclick="setGlobalSearch(''); document.getElementById('global-search').value=''; document.getElementById('global-search').style.borderColor='#2a2a35';" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #2a2a35; border: none; color: #888; width: 1.75rem; height: 1.75rem; border-radius: 50%; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center;">✕</button>` : ''}
         </div>
         <button class="engine-btn" onclick="toggleEnginePopup(event)" style="position: relative; min-height: 2.5rem;">
           <span class="engine-dot" style="background: ${state.engine === 'rule' ? '#888' : '#4fa3ff'};"></span>
@@ -1548,6 +1737,16 @@ function renderApp() {
           <div id="engine-popup" class="engine-popup" style="display: none;" onclick="event.stopPropagation()"></div>
         </button>
         <div class="flex items-center gap-12">
+          ${useSupabase ? `
+            <div title="Cloud Sync Active" style="display: flex; align-items: center; gap: 4px; color: #3ed685; font-size: 0.65rem; font-weight: 800; background: rgba(62,214,133,0.1); padding: 4px 8px; border-radius: 4px; letter-spacing: 0.05em;">
+              <span style="width: 6px; height: 6px; background: #3ed685; border-radius: 50%; animation: pulse 2s infinite;"></span>
+              SYNC
+            </div>
+          ` : `
+            <div title="Using Local Storage Only" style="display: flex; align-items: center; gap: 4px; color: #ffaa00; font-size: 0.65rem; font-weight: 800; background: rgba(255,170,0,0.1); padding: 4px 8px; border-radius: 4px; letter-spacing: 0.05em;">
+              OFFLINE
+            </div>
+          `}
           <div class="avatar" style="background: ${user.color}; width: 2.5rem; height: 2.5rem; font-size: 1rem;">${user.name.charAt(0).toUpperCase()}</div>
           <div style="display: flex; flex-direction: column; line-height: 1.1;">
             <span style="font-size: 0.95rem; font-weight: 600; color: #fff;">${escapeHtml(user.name)}</span>
@@ -1564,6 +1763,7 @@ function renderApp() {
   else if (session.page === "trays") renderTraysPage();
   else if (session.page === "history") renderHistoryPage();
   else if (session.page === "master") renderMasterPage();
+  else if (session.page === "summary") renderSummaryPage();
   else if (session.page === "admin") renderAdminPage();
 }
 
@@ -1735,23 +1935,31 @@ function updateRecentScans() {
   const countEl = document.getElementById('recent-stick-count');
   if (!listEl) return;
   
+  const q = globalSearchQuery.trim();
   const projectScans = state.scans.filter(s => s.projectId == session.currentProjectId).sort((a,b) => b.ts - a.ts);
   countEl && (countEl.textContent = getProjectStickCount(session.currentProjectId));
   
-  if (projectScans.length === 0) {
-    listEl.innerHTML = '<div class="empty" style="padding: 32px;"><div style="font-size: 14px;">No scans yet</div></div>';
+  const filtered = q ? projectScans.filter(s => {
+    const tray = state.trays.find(t => t.id === s.trayId);
+    const user = state.users.find(u => u.id === s.userId);
+    return matchesSearch(q, s.result?.partNumber, tray?.trayNum, s.result?.brand, s.result?.serial, user?.name, s.scan);
+  }) : projectScans;
+  
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="empty" style="padding: 32px;"><div style="font-size: 14px;">' + (q ? 'No matches for "' + escapeHtml(q) + '"' : 'No scans yet') + '</div></div>';
     return;
   }
-  listEl.innerHTML = projectScans.slice(0, 25).map(s => {
+  listEl.innerHTML = filtered.slice(0, 50).map(s => {
     const u = state.users.find(u => u.id === s.userId);
     const tray = state.trays.find(t => t.id === s.trayId);
+    const trayNum = tray?.trayNum ?? (s.trayId ? '...' : '?');
     return `
       <div style="padding: 1rem 1.25rem; border-bottom: 1px solid #15151c; display: flex; align-items: center; gap: 0.75rem;">
         <div class="avatar" style="background: ${u?.color || '#555'}; font-size: 0.9rem;">${u?.name?.charAt(0)?.toUpperCase() || '?'}</div>
         <div style="flex: 1; min-width: 0;">
           <div class="mono truncate" style="font-size: 1rem; color: #fff; font-weight: 600;">${escapeHtml(s.result?.partNumber || s.scan?.slice(0, 30) || '?')}</div>
           <div style="font-size: 0.85rem; color: #888; margin-top: 0.25rem;">
-            Tray #${tray?.trayNum ?? '?'} · ${timeAgo(s.ts)}
+            Tray #${trayNum} · ${timeAgo(s.ts)}
             ${tray && state.users.find(u2 => u2.id == tray.ownerUserId) ? ' · <span style="color: ' + state.users.find(u2 => u2.id == tray.ownerUserId).color + '; opacity: 0.8; font-weight: 700;">' + state.users.find(u2 => u2.id == tray.ownerUserId).name + '</span>' : ""}
           </div>
           ${s.result?.serial ? '<div class="mono" style="font-size: 0.85rem; color: #3ed685; margin-top: 0.125rem;">S/N: ' + escapeHtml(s.result.serial) + '</div>' : ''}
@@ -1776,9 +1984,10 @@ function renderResultCard(r, tray) {
           </span>
           <div style="text-align: right; font-size: 0.85rem; color: #888;">${new Date().toLocaleTimeString()}</div>
         </div>
-        <div class="mono" style="font-size: 1.5rem; font-weight: 800; color: #FFD700; margin-bottom: 1rem; word-break: break-all; line-height: 1.2;">
+        <div class="mono" style="font-size: 1.5rem; font-weight: 800; color: #FFD700; margin-bottom: 0.5rem; word-break: break-all; line-height: 1.2;">
           ${escapeHtml(r.partNumber || "(no part)")}
         </div>
+        ${r.description ? `<div style="font-size: 0.8rem; color: #aaa; margin-bottom: 1rem; line-height: 1.4; background: rgba(255,215,0,0.05); padding: 0.375rem 0.625rem; border-radius: 0.375rem; border: 1px solid rgba(255,215,0,0.1);">📋 ${escapeHtml(r.description)}</div>` : '<div style="margin-bottom: 1rem;"></div>'}
         <div class="flex gap-8" style="flex-wrap: wrap; margin-bottom: 1.5rem;">
           <span class="pill pill-large" style="background: ${brandMeta.hex};">${escapeHtml(r.brand)}</span>
           <span class="pill pill-large" style="background: ${genMeta.bg}; color: ${genMeta.fg};">${escapeHtml(r.generation)}</span>
@@ -1871,9 +2080,17 @@ function exportUserReport(userId) {
 
 let trayFilter = "all";
 let expandedTrays = new Set();
-function toggleTrayExpand(trayId) {
-  if (expandedTrays.has(trayId)) expandedTrays.delete(trayId);
-  else expandedTrays.add(trayId);
+async function toggleTrayExpand(trayId) {
+  if (expandedTrays.has(trayId)) {
+    expandedTrays.delete(trayId);
+  } else {
+    expandedTrays.add(trayId);
+    // Batch resolve scans for this tray to prevent UI lag/pop-in
+    const tray = state.trays.find(t => t.id == trayId);
+    if (tray && tray.sticks.length > 0) {
+      await resolveScansBatch(tray.sticks, tray);
+    }
+  }
   renderTraysPage();
 }
 
@@ -1888,7 +2105,8 @@ function renderTraysPage() {
     if (trayFilter === "full" && t.sticks.length < t.capacity) return false;
     if (trayFilter === "active" && t.sticks.length >= t.capacity) return false;
     if (q) {
-      if (!t.partNumber.toLowerCase().includes(q) && t.trayNum.toString() !== q) return false;
+      const owner = state.users.find(u => u.id == t.ownerUserId || u.id == t.createdBy);
+      if (!matchesSearch(q, t.partNumber, t.trayNum, t.brand, t.generation, owner?.name, t.label)) return false;
     }
     return true;
   }).sort((a, b) => a.trayNum - b.trayNum);
@@ -1902,7 +2120,7 @@ function renderTraysPage() {
 
   document.getElementById("page-content").innerHTML = `
     <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
-      <h1 class="h" style="margin-bottom: 0;">Trays · ${projectTrays.length}</h1>
+      <h1 class="h" style="margin-bottom: 0;">Trays · ${visible.length}${q ? ` <span style="font-size: 0.8rem; color: #FFD700; font-weight: 400;">/ ${projectTrays.length} matching "${escapeHtml(globalSearchQuery)}"</span>` : ''}</h1>
       <div class="flex gap-12">
         ${filterBtns.map(f => `<button onclick="setTrayFilter('${f.id}')" style="background: ${trayFilter === f.id ? '#FFD700' : '#1a1a22'}; color: ${trayFilter === f.id ? '#1a1a2e' : '#888'}; border: 0; padding: 0.6rem 1.25rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 700; min-height: 2.5rem;">${f.label}</button>`).join("")}
       </div>
@@ -2465,11 +2683,20 @@ async function doEditStick(trayId, stickIndex) {
   }
 }
 
-function openTrayInventoryModal(trayId) {
+async function openTrayInventoryModal(trayId) {
   const tray = state.trays.find(t => t.id == trayId);
   if (!tray) return;
   
-  // Build inventory from tray.sticks (source of truth for indices)
+  showModal(`
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 3rem;">
+      <div style="color: #FFD700; font-size: 1.2rem; font-weight: 700;">Loading Inventory...</div>
+    </div>
+  `);
+  
+  // Batch resolve all scans for this tray at once (1 DB call instead of 50)
+  await resolveScansBatch(tray.sticks, tray);
+
+  // Build inventory from tray.sticks
   const stickData = tray.sticks.map((scanId, idx) => {
     const s = state.scans.find(sc => sc.id == scanId);
     return { idx, scanId, scan: s };
@@ -2899,8 +3126,9 @@ function renderHistoryPage() {
   const q = globalSearchQuery.toLowerCase().trim();
   const filtered = (historyFilter === "all" ? projectScans : projectScans.filter(s => s.userId == historyFilter)).filter(s => {
     if (!q) return true;
-    const trayNum = state.trays.find(t => t.id == s.trayId)?.trayNum?.toString() || "";
-    return (s.result?.partNumber || "").toLowerCase().includes(q) || trayNum === q;
+    const tray = state.trays.find(t => t.id == s.trayId);
+    const user = state.users.find(u => u.id == s.userId);
+    return matchesSearch(q, s.result?.partNumber, tray?.trayNum, s.result?.brand, s.result?.generation, s.result?.serial, user?.name, s.scan);
   });
   
   document.getElementById("page-content").innerHTML = `
@@ -3020,7 +3248,8 @@ function renderMasterPage() {
   const filteredTrays = masterFilter === "all" ? projectTrays : projectTrays.filter(t => t.createdBy == masterFilter || t.ownerUserId == masterFilter);
   const searchedTrays = filteredTrays.filter(t => {
     if (!q) return true;
-    return t.partNumber.toLowerCase().includes(q) || t.trayNum.toString() === q;
+    const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+    return matchesSearch(q, t.partNumber, t.trayNum, t.brand, t.generation, owner?.name);
   });
 
   const trayRows = searchedTrays.map(t => {
@@ -3098,6 +3327,146 @@ function exportMasterCSV() {
   a.click();
   URL.revokeObjectURL(url);
   showToast('Master CSV downloaded!', '#3ed685');
+}
+
+function renderSummaryPage() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  
+  // Aggregate by part number (case-insensitive)
+  const partMap = {};
+  projectTrays.forEach(t => {
+    const key = (t.partNumber || '').toUpperCase();
+    if (!key) return;
+    if (!partMap[key]) partMap[key] = { partNumber: key, brand: t.brand || 'Unknown', generation: t.generation || 'Unknown', totalSticks: 0, fullTrays: 0, activeTrays: 0, users: new Set(), trays: [] };
+    const entry = partMap[key];
+    entry.totalSticks += t.sticks?.length || 0;
+    if (t.sticks?.length >= t.capacity) entry.fullTrays++;
+    else entry.activeTrays++;
+    const owner = t.ownerUserId || t.createdBy;
+    if (owner) entry.users.add(owner);
+    entry.trays.push(t);
+  });
+  
+  const parts = Object.values(partMap).sort((a,b) => b.totalSticks - a.totalSticks);
+  const totalSticks = parts.reduce((s, p) => s + p.totalSticks, 0);
+  const q = globalSearchQuery.toLowerCase().trim();
+  const filtered = q ? parts.filter(p => matchesSearch(q, p.partNumber, p.brand, p.generation, decodeDDRPartNumber(p.partNumber, p.brand, p.generation))) : parts;
+
+  document.getElementById("page-content").innerHTML = `
+    <div class="flex items-center justify-between" style="margin-bottom: 1.5rem;">
+      <div>
+        <h1 class="h" style="margin-bottom: 0.25rem;">Part Summary</h1>
+        <div style="font-size: 0.9rem; color: #888;">${parts.length} unique parts · ${totalSticks} total sticks · ${projectTrays.length} trays</div>
+      </div>
+      <button class="btn-ghost" onclick="exportSummaryCSV()" style="font-size: 0.9rem; padding: 0.6rem 1.25rem;">📥 Export Summary</button>
+    </div>
+    
+    <div class="card" style="padding: 0; overflow: hidden; overflow-x: auto;">
+      <div style="display: grid; grid-template-columns: 2fr 0.8fr 0.6fr 0.7fr 0.7fr 0.7fr 0.6fr; gap: 0.75rem; padding: 0.75rem 1rem; background: #15151c; font-size: 0.75rem; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">
+        <div>Part Number</div><div>Brand</div><div>Gen</div><div>Total Qty</div><div>Full Trays</div><div>Active</div><div>Scanners</div>
+      </div>
+      ${filtered.length === 0 ? '<div style="padding: 2rem; text-align: center; color: #555;">No parts found</div>' : filtered.map(p => {
+        const bm = BRAND_META[p.brand] || BRAND_META.Unknown;
+        const gm = GEN_META[p.generation] || GEN_META.Unknown;
+        const userNames = Array.from(p.users).map(uid => state.users.find(u => u.id == uid)?.name || '?').join(', ');
+        const pct = totalSticks > 0 ? (p.totalSticks / totalSticks * 100).toFixed(1) : 0;
+        const desc = decodeDDRPartNumber(p.partNumber, p.brand, p.generation);
+        return `
+        <div style="display: grid; grid-template-columns: 2fr 0.8fr 0.6fr 0.7fr 0.7fr 0.7fr 0.6fr; gap: 0.75rem; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #15151c; font-size: 0.9rem; cursor: pointer;" onclick="showPartDetail('${escapeHtml(p.partNumber)}')">
+          <div>
+            <div class="mono" style="color: #FFD700; font-weight: 700;">${escapeHtml(p.partNumber)}</div>
+            ${desc ? `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${escapeHtml(desc)}</div>` : ''}
+            <div style="font-size: 0.65rem; color: #555;">${pct}% of total</div>
+          </div>
+          <div><span class="pill" style="background: ${bm.hex}; font-size: 0.7rem;">${escapeHtml(p.brand)}</span></div>
+          <div><span class="pill" style="background: ${gm.bg}; color: ${gm.fg}; font-size: 0.7rem;">${escapeHtml(p.generation)}</span></div>
+          <div style="color: #fff; font-weight: 900; font-size: 1.1rem;">${p.totalSticks}</div>
+          <div style="color: #ff6b8a; font-weight: 700;">${p.fullTrays}</div>
+          <div style="color: #3ed685; font-weight: 700;">${p.activeTrays}</div>
+          <div style="font-size: 0.75rem; color: #888;" title="${escapeHtml(userNames)}">${p.users.size}</div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function showPartDetail(partNumber) {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const trays = state.trays.filter(t => t.projectId == project.id && (t.partNumber || '').toUpperCase() === partNumber.toUpperCase()).sort((a,b) => a.trayNum - b.trayNum);
+  const totalSticks = trays.reduce((s,t) => s + (t.sticks?.length || 0), 0);
+  
+  // Group by user
+  const userGroups = {};
+  trays.forEach(t => {
+    const uid = t.ownerUserId || t.createdBy || 'unknown';
+    if (!userGroups[uid]) userGroups[uid] = { sticks: 0, trays: 0, fullTrays: 0 };
+    userGroups[uid].sticks += t.sticks?.length || 0;
+    userGroups[uid].trays++;
+    if (t.sticks?.length >= t.capacity) userGroups[uid].fullTrays++;
+  });
+
+  const desc = decodeDDRPartNumber(partNumber, trays[0]?.brand, trays[0]?.generation);
+  showModal(`
+    <h2 class="h2" style="color: #FFD700; margin-bottom: 4px;">${escapeHtml(partNumber)}</h2>
+    ${desc ? `<div style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem; background: rgba(255,215,0,0.05); padding: 0.375rem 0.625rem; border-radius: 0.375rem; display: inline-block;">📋 ${escapeHtml(desc)}</div>` : ''}
+    <div style="font-size: 0.85rem; color: #888; margin-bottom: 1.5rem;">${trays.length} trays · ${totalSticks} total sticks</div>
+    
+    <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 0.5rem;">By User</div>
+    <div style="display: grid; gap: 0.5rem; margin-bottom: 1.5rem;">
+      ${Object.entries(userGroups).map(([uid, data]) => {
+        const u = state.users.find(u => u.id == uid);
+        return `<div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.75rem; background: #15151c; border-radius: 0.5rem;">
+          <div class="avatar avatar-sm" style="background: ${u?.color || '#555'};">${(u?.name || '?').charAt(0)}</div>
+          <div style="flex: 1; font-weight: 600; color: #fff;">${escapeHtml(u?.name || 'Unknown')}</div>
+          <div style="font-size: 1.1rem; font-weight: 900; color: #FFD700;">${data.sticks}</div>
+          <div style="font-size: 0.75rem; color: #888;">${data.trays} trays (${data.fullTrays} full)</div>
+        </div>`;
+      }).join('')}
+    </div>
+    
+    <div style="font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 700; margin-bottom: 0.5rem;">All Trays</div>
+    <div style="max-height: 250px; overflow-y: auto;">
+      ${trays.map(t => {
+        const owner = state.users.find(u => u.id == (t.ownerUserId || t.createdBy));
+        const full = t.sticks?.length >= t.capacity;
+        return `<div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid #15151c; font-size: 0.85rem;">
+          <span style="color: #FFD700; font-weight: 900; min-width: 3rem;">#${t.trayNum}</span>
+          <span style="color: ${owner?.color || '#888'}; font-size: 0.8rem;">${escapeHtml(owner?.name || '?')}</span>
+          <span style="flex: 1;"></span>
+          <span style="font-weight: 700; color: ${full ? '#ff6b8a' : '#fff'};">${t.sticks?.length || 0}/${t.capacity}</span>
+          <span style="font-size: 0.7rem; color: ${full ? '#ff6b8a' : '#3ed685'};">${full ? 'FULL' : 'ACTIVE'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    
+    <div class="flex justify-end" style="margin-top: 1.5rem;">
+      <button class="btn" onclick="hideModal()">Close</button>
+    </div>
+  `);
+}
+
+function exportSummaryCSV() {
+  const project = state.projects.find(p => p.id == session.currentProjectId);
+  const projectTrays = state.trays.filter(t => t.projectId == project.id);
+  const partMap = {};
+  projectTrays.forEach(t => {
+    const key = (t.partNumber || '').toUpperCase();
+    if (!partMap[key]) partMap[key] = { partNumber: key, brand: t.brand || 'Unknown', generation: t.generation || 'Unknown', totalSticks: 0, fullTrays: 0, activeTrays: 0 };
+    partMap[key].totalSticks += t.sticks?.length || 0;
+    if (t.sticks?.length >= t.capacity) partMap[key].fullTrays++;
+    else partMap[key].activeTrays++;
+  });
+  const parts = Object.values(partMap).sort((a,b) => b.totalSticks - a.totalSticks);
+  const headers = ['Part Number','Brand','Generation','Total Sticks','Full Trays','Active Trays'];
+  const rows = parts.map(p => [p.partNumber, p.brand, p.generation, p.totalSticks, p.fullTrays, p.activeTrays].map(v => '"' + String(v).replace(/"/g, '""') + '"'));
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = project.name + '_part_summary.csv';
+  a.click();
+  showToast('Summary CSV downloaded', '#3ed685');
 }
 
 let adminTab = "overview";
@@ -3317,10 +3686,155 @@ function renderAdminUsers(el) {
         <div>
           <div style="color: #FFD700; font-weight: 700; margin-bottom: 0.25rem;">Admin</div>
           <div style="color: #666; line-height: 1.5;">Full access: manage users, projects, CSV import, clear data</div>
+          <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #2a2a35;">
+            <h2 class="h2" style="color: #ff4444; margin-bottom: 1rem;">Data Cleanup</h2>
+            <div style="background: #1a1a22; border-radius: 0.75rem; padding: 1rem; border: 1px solid #3a1520; margin-bottom: 1rem;">
+              <div style="font-size: 0.9rem; color: #3ed685; font-weight: 700; margin-bottom: 0.5rem;">Repair Project Integrity</div>
+              <div style="font-size: 0.8rem; color: #888; margin-bottom: 1rem; line-height: 1.5;">
+                Fixes trays that show the wrong number of sticks. Use this if your counts seem "stuck" or incorrect.
+              </div>
+              <button class="btn" style="background: #3ed685; color: #1a1a2e; width: 100%;" onclick="doRepairProject()">Repair Tray Counts</button>
+            </div>
+
+            <div style="background: #1a1a22; border-radius: 0.75rem; padding: 1rem; border: 1px solid #3a1520;">
+              <div style="font-size: 0.9rem; color: #ff6b8a; font-weight: 700; margin-bottom: 0.5rem;">Deduplicate Project</div>
+              <div style="font-size: 0.8rem; color: #888; margin-bottom: 1rem; line-height: 1.5;">
+                This will scan all scans in the current project and remove exact duplicates (same part number, tray, and serial) to fix data inflation issues.
+              </div>
+              <button class="btn" style="background: #ff4444; color: #fff; width: 100%;" onclick="doDeduplicateProject()">Run Deduplication Now</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   `;
+}
+
+async function doDeduplicateProject() {
+  const pid = session.currentProjectId;
+  if (!pid) return;
+  
+  if (!confirm("This will permanently delete duplicate scans to clean up the project. Continue?")) return;
+  
+  showToast("Analyzing data...", "#FFD700");
+  
+  // 1. Fetch ALL scans for this project (bypassing the 200 limit for cleanup)
+  let allScans = [];
+  if (useSupabase && sb) {
+    // Fetch up to 100k scans for this project
+    const { data, error } = await sb.from('scans').select('*').eq('projectId', pid).limit(100000);
+    if (error) { showToast("Error fetching scans: " + error.message, "#ff4444"); return; }
+    allScans = data;
+  } else {
+    allScans = state.scans.filter(s => s.projectId == pid);
+  }
+  
+  if (allScans.length === 0) { showToast("No scans found to deduplicate.", "#888"); return; }
+  
+  const seen = new Set();
+  const toDelete = [];
+  const keptScans = [];
+  
+  for (const s of allScans) {
+    const serial = (s.result.serial || '').trim();
+    // SAFE DEDUPLICATION: 
+    // If there is a serial, we can safely deduplicate.
+    // If there is NO serial, it's a bulk item - we only delete if the EXACT same scan object exists twice (unlikely).
+    const key = serial 
+      ? `SER_${s.trayId}_${s.result.partNumber}_${serial}`
+      : `BULK_${s.id}`; // Non-serial items are unique by their ID
+      
+    if (seen.has(key)) {
+      toDelete.push(s.id);
+    } else {
+      seen.add(key);
+      keptScans.push(s);
+    }
+  }
+  
+  if (toDelete.length === 0) {
+    showToast("No duplicates found. Your data is clean!", "#3ed685");
+    return;
+  }
+  
+  showToast(`Found ${toDelete.length} duplicates. Deleting...`, "#FFD700");
+  
+  if (useSupabase && sb) {
+    // Delete in batches of 500
+    for (let i = 0; i < toDelete.length; i += 500) {
+      const batch = toDelete.slice(i, i + 500);
+      await sb.from('scans').delete().in('id', batch);
+    }
+    
+    // Refresh local trays (recalculate stick lists)
+    const { data: trays } = await sb.from('trays').select('*').eq('projectId', pid).limit(10000);
+    if (trays) {
+      const traysToSync = [];
+      for (const t of trays) {
+        const traySticks = keptScans.filter(s => s.trayId == t.id).map(s => s.id);
+        if (JSON.stringify(t.sticks) !== JSON.stringify(traySticks)) {
+          t.sticks = traySticks;
+          traysToSync.push(t);
+        }
+      }
+      
+      // Batch update trays in chunks of 100
+      for (let i = 0; i < traysToSync.length; i += 100) {
+        const batch = traysToSync.slice(i, i + 100);
+        await sb.from('trays').upsert(batch);
+      }
+    }
+  }
+  
+  // Update local state
+  state.scans = state.scans.filter(s => s.projectId != pid || !toDelete.includes(s.id));
+  fetchProjectData(pid); // Refresh everything
+  
+  showToast(`Successfully deleted ${toDelete.length} duplicates!`, "#3ed685");
+}
+
+async function doRepairProject() {
+  const pid = session.currentProjectId;
+  if (!pid) return;
+  
+  showToast("Repairing project integrity...", "#FFD700");
+  
+  try {
+    if (useSupabase && sb) {
+      // 1. Fetch all scans for this project
+      const { data: allScans, error: sErr } = await sb.from('scans').select('id, trayId').eq('projectId', pid).limit(100000);
+      if (sErr) throw sErr;
+      
+      // 2. Fetch all trays for this project
+      const { data: allTrays, error: tErr } = await sb.from('trays').select('*').eq('projectId', pid).limit(10000);
+      if (tErr) throw tErr;
+      
+      const traysToSync = [];
+      for (const tray of allTrays) {
+        const correctSticks = allScans.filter(s => s.trayId == tray.id).map(s => s.id);
+        // Only update if the counts are different
+        if (JSON.stringify(tray.sticks) !== JSON.stringify(correctSticks)) {
+          tray.sticks = correctSticks;
+          traysToSync.push(tray);
+        }
+      }
+      
+      if (traysToSync.length > 0) {
+        for (let i = 0; i < traysToSync.length; i += 100) {
+          const batch = traysToSync.slice(i, i + 100);
+          await sb.from('trays').upsert(batch);
+        }
+        showToast(`Repaired ${traysToSync.length} trays!`, "#3ed685");
+      } else {
+        showToast("Project is already healthy.", "#3ed685");
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    showToast("Repair failed: " + e.message, "#ff4444");
+  }
+  
+  fetchProjectData(pid);
 }
 
 function renderAdminMembers(el, project) {
@@ -3673,114 +4187,134 @@ async function promptResetAllData() {
   switchProject();
 }
 
-async function handleCSVImport() {
+function handleCSVImport() {
   const fileInput = document.getElementById("csv-upload");
   if (!fileInput.files || fileInput.files.length === 0) {
     showToast("Please select a CSV file", "#ff6b8a");
     return;
   }
   const file = fileInput.files[0];
-  const text = await file.text();
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length < 2) { showToast("CSV is empty or missing headers", "#ff6b8a"); return; }
-  
-  const parseLine = (line) => {
-    const result = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      if (line[i] === '"') inQuotes = !inQuotes;
-      else if (line[i] === ',' && !inQuotes) { result.push(cur.trim()); cur = ''; }
-      else cur += line[i];
-    }
-    result.push(cur.trim());
-    return result;
-  };
-  
-  const headers = parseLine(lines[0]);
-  const normHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
-  
-  const idxPart = normHeaders.findIndex(h => h.includes('part'));
-  const idxTray = normHeaders.findIndex(h => h === 'tray' || h === 'traynumber');
-  const idxBrand = normHeaders.findIndex(h => h.includes('brand'));
-  const idxGen = normHeaders.findIndex(h => h.includes('gen'));
-  const idxSerial = normHeaders.findIndex(h => h.includes('serial'));
-  const idxQty = normHeaders.findIndex(h => h.includes('qty') || h.includes('quantity'));
-  const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
-  
-  const firstRow = lines.length > 1 ? parseLine(lines[1]) : [];
-  
-  const getOptions = (selectedIdx) => {
-    return `<option value="-1">-- Ignore / Not in CSV --</option>` + 
-           headers.map((h, i) => `<option value="${i}" ${i === selectedIdx ? 'selected' : ''}>[Col ${i+1}] ${escapeHtml(h)} (e.g. ${escapeHtml(firstRow[i] || '')})</option>`).join('');
-  };
-  
-  const modalHTML = `
-    <h2 class="h2" style="margin-bottom: 0.5rem;">Map CSV Columns</h2>
-    <div style="font-size: 0.85rem; color: #888; margin-bottom: 1.5rem;">
-      Assign your CSV columns to system fields. <br>
-      <i style="color: #FFD700;">Note: For a "Clean Slate", use <b>Admin > Clear Project Data</b> before importing.</i>
-    </div>
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length < 2) { showToast("CSV is empty or missing headers", "#ff6b8a"); return; }
     
-    <div class="field" style="margin-bottom: 1.5rem;">
-      <div class="label" style="color: #3ed685; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Import Method</div>
-      <select id="import-method" style="width: 100%; min-height: 2.75rem; background: #15151c; color: #fff; border: 1px solid #3ed685; border-radius: 0.5rem; padding: 0 0.75rem; font-weight: 700;">
-        <option value="sync">Update Existing (Smart Sync - Prevents doubling)</option>
-        <option value="append">Add New (Simple Append - Adds everything as new)</option>
-      </select>
-    </div>
+    const parseLine = (line) => {
+      const result = [];
+      let cur = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') inQuotes = !inQuotes;
+        else if (line[i] === ',' && !inQuotes) { result.push(cur.trim()); cur = ''; }
+        else cur += line[i];
+      }
+      result.push(cur.trim());
+      return result;
+    };
+    
+    const headers = parseLine(lines[0]);
+    const normHeaders = headers.map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+    
+    const idxPart = normHeaders.findIndex(h => h.includes('part'));
+    const idxTray = normHeaders.findIndex(h => h === 'tray' || h === 'traynumber');
+    const idxBrand = normHeaders.findIndex(h => h.includes('brand'));
+    const idxGen = normHeaders.findIndex(h => h.includes('gen'));
+    const idxSerial = normHeaders.findIndex(h => h.includes('serial'));
+    const idxQty = normHeaders.findIndex(h => h.includes('qty') || h.includes('quantity') || h.includes('stick') || h.includes('count'));
+    const idxScan = normHeaders.findIndex(h => h.includes('scan') || h.includes('qr'));
+    
+    const firstRow = lines.length > 1 ? parseLine(lines[1]) : [];
+    
+    const getOptions = (selectedIdx) => {
+      return `<option value="-1">-- Ignore / Not in CSV --</option>` + 
+             headers.map((h, i) => `<option value="${i}" ${i === selectedIdx ? 'selected' : ''}>[Col ${i+1}] ${escapeHtml(h)} (e.g. ${escapeHtml(firstRow[i] || '')})</option>`).join('');
+    };
+    
+    const modalHTML = `
+      <h2 class="h2" style="margin-bottom: 0.5rem;">Map CSV Columns</h2>
+      <div style="font-size: 0.85rem; color: #888; margin-bottom: 1.5rem;">
+        Assign your CSV columns to system fields. <br>
+        <i style="color: #FFD700;">Note: For a "Clean Slate", use <b>Admin > Clear Project Data</b> before importing.</i>
+      </div>
+      
+      <div class="field" style="margin-bottom: 1.5rem;">
+        <div class="label" style="color: #3ed685; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Import Method</div>
+        <select id="import-method" style="width: 100%; min-height: 2.75rem; background: #15151c; color: #fff; border: 1px solid #3ed685; border-radius: 0.5rem; padding: 0 0.75rem; font-weight: 700;">
+          <option value="sync" selected>Smart Sync (Compare & Update existing - PREVENTS DUPLICATES)</option>
+          <option value="replace">Wipe & Replace (Delete EVERYTHING in this project and start fresh)</option>
+          <option value="import">Add New (Simple Append - Just adds more data)</option>
+        </select>
+      </div>
 
-    <div style="display: grid; gap: 0.75rem; margin-bottom: 1.5rem;">
-      <div>
-        <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Part Number *</div>
-        <select id="map-part" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxPart)}</select>
-      </div>
-      <div>
-        <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Tray Number *</div>
-        <select id="map-tray" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxTray)}</select>
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+      <div style="display: grid; gap: 0.75rem; margin-bottom: 1.5rem;">
         <div>
-          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Brand</div>
-          <select id="map-brand" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxBrand)}</select>
+          <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Part Number *</div>
+          <select id="map-part" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxPart)}</select>
         </div>
         <div>
-          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Generation</div>
-          <select id="map-gen" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxGen)}</select>
+          <div class="label" style="color: #FFD700; font-size: 0.75rem; margin-bottom: 0.25rem;">Tray Number *</div>
+          <select id="map-tray" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxTray)}</select>
         </div>
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div>
+            <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Brand</div>
+            <select id="map-brand" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxBrand)}</select>
+          </div>
+          <div>
+            <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Generation</div>
+            <select id="map-gen" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxGen)}</select>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div>
+            <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Serial Number</div>
+            <select id="map-serial" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxSerial)}</select>
+          </div>
+          <div>
+            <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Quantity</div>
+            <select id="map-qty" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxQty)}</select>
+          </div>
+        </div>
         <div>
-          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Serial Number</div>
-          <select id="map-serial" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxSerial)}</select>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">QR Scan Input (Raw string)</div>
+          <select id="map-scan" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxScan)}</select>
         </div>
         <div>
-          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Quantity</div>
-          <select id="map-qty" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxQty)}</select>
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Owner / Scanned By</div>
+          <select id="map-owner" onchange="document.getElementById('owner-col-wrapper').style.display=this.value==='column'?'':'none'" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">
+            <option value="current" selected>Use current logged-in user</option>
+            <option value="column">Map from CSV column:</option>
+          </select>
+        </div>
+        <div id="owner-col-wrapper" style="display: none;">
+          <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">Owner Name Column</div>
+          <select id="map-owner-col" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(-1)}</select>
         </div>
       </div>
-      <div>
-        <div class="label" style="font-size: 0.75rem; margin-bottom: 0.25rem;">QR Scan Input (Raw string)</div>
-        <select id="map-scan" style="width: 100%; min-height: 2.25rem; background: #1a1a22; color: #fff; border: 1px solid #2a2a35; border-radius: 0.5rem; padding: 0 0.75rem;">${getOptions(idxScan)}</select>
+      
+      <div class="flex items-center justify-between" style="margin-top: 1rem;">
+        <button class="btn-ghost" onclick="hideModal()">Cancel</button>
+        <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Rows</button>
       </div>
-    </div>
+    `;
     
-    <div class="flex items-center justify-between" style="margin-top: 1rem;">
-      <button class="btn-ghost" onclick="hideModal()">Cancel</button>
-      <button class="btn" onclick="executeCSVImport()">Confirm & Import ${lines.length - 1} Rows</button>
-    </div>
-  `;
-  
-  window._pendingCSVImportLines = lines;
-  window._pendingCSVImportParseLine = parseLine;
-  showModal(modalHTML);
+    window._pendingCSVImportLines = lines;
+    window._pendingCSVImportParseLine = parseLine;
+    showModal(modalHTML);
+  };
+  reader.readAsText(file);
 }
 
 async function executeCSVImport() {
+  if (window._isImporting) return;
   const lines = window._pendingCSVImportLines;
   const parseLine = window._pendingCSVImportParseLine;
   if (!lines || !parseLine) return;
   
+  window._isImporting = true;
+  window.isBulkScanning = true;
+
   const method = document.getElementById("import-method")?.value || "sync";
   const idxPart = parseInt(document.getElementById("map-part").value, 10);
   const idxTray = parseInt(document.getElementById("map-tray").value, 10);
@@ -3789,9 +4323,13 @@ async function executeCSVImport() {
   const idxSerial = parseInt(document.getElementById("map-serial").value, 10);
   const idxQty = parseInt(document.getElementById("map-qty").value, 10);
   const idxScan = parseInt(document.getElementById("map-scan")?.value || "-1", 10);
+  const ownerMode = document.getElementById("map-owner")?.value || "current";
+  const idxOwner = ownerMode === "column" ? parseInt(document.getElementById("map-owner-col")?.value || "-1", 10) : -1;
   
   if (idxPart === -1 || idxTray === -1) {
     showToast("Part Number and Tray columns are required.", "#ff6b8a");
+    window._isImporting = false;
+    window.isBulkScanning = false;
     return;
   }
   
@@ -3800,160 +4338,232 @@ async function executeCSVImport() {
     <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 4rem;">
       <div id="import-progress" style="color: #FFD700; font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;">${method==='sync'?'Syncing':'Importing'} CSV Data...</div>
       <div id="import-stats" style="color: #888;">Processing rows...</div>
+      <div style="width: 300px; height: 6px; background: #1a1a22; border-radius: 3px; margin-top: 1.5rem; overflow: hidden;">
+        <div id="import-bar" style="width: 0%; height: 100%; background: #FFD700; transition: width 0.3s;"></div>
+      </div>
     </div>`;
   
   await new Promise(r => setTimeout(r, 50));
   
   let totalAdded = 0;
   let skipped = 0;
-  const project = state.projects.find(p => p.id == session.currentProjectId);
-  const progressEl = document.getElementById("import-progress");
-  const statsEl = document.getElementById("import-stats");
-  window.isBulkScanning = true;
-  
-  const newScans = [];     // collect all new scans for batch DB insert
-  const newTrays = [];     // collect all newly created trays
-  const updatedTrays = new Map(); // trayId -> tray ref (for batch sticks update)
-
-  for (let i = 1; i < lines.length; i++) {
-    if (i % 100 === 0) {
-      progressEl.textContent = `Processing row ${i} of ${lines.length - 1}...`;
-      statsEl.textContent = `${totalAdded} sticks added, ${skipped} skipped`;
-      await new Promise(r => setTimeout(r, 2)); 
-    }
-
-    const cols = parseLine(lines[i]);
-    if (cols.length <= idxPart || cols.length <= idxTray) { skipped++; continue; }
+  try {
+    const project = state.projects.find(p => p.id == session.currentProjectId);
+    const progressEl = document.getElementById("import-progress");
+    const statsEl = document.getElementById("import-stats");
+    const barEl = document.getElementById("import-bar");
     
-    const partNum = cols[idxPart]?.trim().toUpperCase();
-    if (!partNum || partNum === '#VALUE!') { skipped++; continue; }
-    
-    const targetTrayNum = parseInt(cols[idxTray], 10);
-    if (isNaN(targetTrayNum)) { skipped++; continue; }
+    const newScans = [];     
+    const newTrays = [];     
+    const updatedTrays = new Map(); 
 
-    const rawBrand = idxBrand >= 0 ? String(cols[idxBrand] || '').trim() : "Unknown";
-    const brand = (rawBrand && isNaN(rawBrand) && rawBrand !== '0') ? rawBrand : "Unknown";
-    const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen]?.trim() : "Unknown";
-    const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial]?.trim() : "";
-    const scanRaw = idxScan >= 0 ? cols[idxScan]?.trim() : `CSV_ROW_${i}_${partNum}`;
-    let targetTotalQty = 1;
-    if (idxQty >= 0) {
-      const parsedQty = parseInt(cols[idxQty], 10);
-      if (!isNaN(parsedQty) && parsedQty > 0) targetTotalQty = parsedQty;
-    }
-
-    const classification = { partNumber: partNum, brand, generation: gen, serial, label: "" };
-
-    let currentTray = state.trays.find(t => t.projectId == project.id && t.trayNum == targetTrayNum);
-    
-    if (currentTray) {
-      if ((currentTray.partNumber || '').toUpperCase() !== partNum) {
-        const assignment = assignTray(project.id, session.currentUser.id, classification);
-        if (!assignment) { skipped++; continue; }
-        if (assignment.isNew) {
-          assignment.tray.sticks = [];
-          state.trays.push(assignment.tray);
-          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
-          newTrays.push(assignment.tray);
-          currentTray = assignment.tray;
-        } else {
-          currentTray = assignment.tray;
-        }
-      }
+    // Build a fast lookup map for existing trays
+    const trayLookup = new Map();
+    if (method !== "replace") {
+      state.trays.forEach(t => {
+        if (t.projectId != project.id) return;
+        const key = project.mode === "separate" ? `${t.trayNum}_${t.ownerUserId}` : `${t.trayNum}`;
+        trayLookup.set(key, t);
+      });
     } else {
-      currentTray = {
-        id: generateId('t'), projectId: project.id, ownerUserId: session.currentUser.id,
-        partNumber: partNum, label: "", brand, generation: gen,
-        trayNum: targetTrayNum, capacity: project.defaultCap, sticks: [],
-        createdAt: Date.now(), createdBy: session.currentUser.id, projectName: project.name
-      };
-      state.trays.push(currentTray);
-      state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, targetTrayNum);
-      newTrays.push(currentTray);
-    }
-
-    let toAdd = (method === "sync") ? Math.max(0, targetTotalQty - currentTray.sticks.length) : targetTotalQty;
-    if (toAdd === 0) { skipped++; continue; }
-    
-    while (toAdd > 0) {
-      let space = currentTray.capacity - currentTray.sticks.length;
+      // WIPE MODE: clear local state for this project
+      state.trays = state.trays.filter(t => t.projectId != project.id);
+      state.scans = state.scans.filter(s => s.projectId != project.id);
+      state.trayCounters[project.id] = 0;
       
-      if (space <= 0) {
-        const assignment = assignTray(project.id, session.currentUser.id, classification);
-        if (!assignment) break; 
-        if (assignment.isNew) {
-          assignment.tray.sticks = [];
-          state.trays.push(assignment.tray);
-          state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
-          newTrays.push(assignment.tray);
-          currentTray = assignment.tray;
-        } else {
-          currentTray = assignment.tray;
-        }
-        space = currentTray.capacity - currentTray.sticks.length;
+      progressEl.textContent = 'Clearing existing project data...';
+      if (useSupabase && sb) {
+        await sb.from('scans').delete().eq('projectId', project.id);
+        await sb.from('trays').delete().eq('projectId', project.id);
+      }
+    }
+
+    for (let i = 1; i < lines.length; i++) {
+      if (i % 100 === 0) {
+        const pct = Math.round((i / lines.length) * 100);
+        progressEl.textContent = `Processing row ${i} of ${lines.length - 1}...`;
+        statsEl.textContent = `${totalAdded} sticks added, ${skipped} skipped`;
+        if (barEl) barEl.style.width = `${pct}%`;
+        await new Promise(r => setTimeout(r, 2)); 
       }
 
-      const batch = Math.min(space, toAdd);
-      for (let b = 0; b < batch; b++) {
-        const scanId = generateId('s');
-        const newScan = {
-          id: scanId, projectId: project.id, userId: session.currentUser.id,
-          ts: Date.now() + totalAdded, scan: scanRaw,
-          result: { ...classification, method: "csv_import" },
-          trayId: currentTray.id
-        };
-        currentTray.sticks.push(scanId);
-        state.scans.push(newScan);
-        newScans.push(newScan);
+      const cols = parseLine(lines[i]);
+      if (cols.length <= idxPart || cols.length <= idxTray) { skipped++; continue; }
+      
+      const partNum = cols[idxPart]?.trim().toUpperCase();
+      if (!partNum || partNum === '#VALUE!') { skipped++; continue; }
+      
+      const targetTrayNum = parseInt(cols[idxTray], 10);
+      if (isNaN(targetTrayNum)) { skipped++; continue; }
+
+      const rawBrand = idxBrand >= 0 ? String(cols[idxBrand] || '').trim() : "Unknown";
+      const brand = (rawBrand && isNaN(rawBrand) && rawBrand !== '0') ? rawBrand : "Unknown";
+      const gen = idxGen >= 0 && cols[idxGen] !== '#VALUE!' ? cols[idxGen]?.trim() : "Unknown";
+      const serial = idxSerial >= 0 && cols[idxSerial] !== '-' ? cols[idxSerial]?.trim() : "";
+      const scanRaw = idxScan >= 0 ? cols[idxScan]?.trim() : `CSV_ROW_${i}_${partNum}`;
+      let targetTotalQty = 1;
+      if (idxQty >= 0) {
+        const parsedQty = parseInt(cols[idxQty], 10);
+        if (!isNaN(parsedQty) && parsedQty > 0) targetTotalQty = parsedQty;
       }
-      updatedTrays.set(currentTray.id, currentTray);
-      totalAdded += batch;
-      toAdd -= batch;
-    }
-  }
-  
-  // Save all local state at once
-  saveLocalState();
-  
-  progressEl.textContent = 'Syncing to database...';
-  statsEl.textContent = `${totalAdded} sticks processed locally. Uploading in batches...`;
-  await new Promise(r => setTimeout(r, 50));
-  
-  // Batch DB writes — insert trays and scans in chunks of 500
-  if (useSupabase && sb) {
-    try {
-      // Insert new trays in batch
-      if (newTrays.length > 0) {
-        for (let c = 0; c < newTrays.length; c += 500) {
-          const chunk = newTrays.slice(c, c + 500);
-          await sb.from('trays').upsert(chunk);
+
+      const classification = { partNumber: partNum, brand, generation: gen, serial, label: "" };
+
+      // Resolve owner
+      let ownerId = session.currentUser.id;
+      if (idxOwner >= 0 && cols[idxOwner]) {
+        const ownerName = cols[idxOwner].trim();
+        const matchedUser = state.users.find(u => u.name.toLowerCase() === ownerName.toLowerCase() || u.username.toLowerCase() === ownerName.toLowerCase());
+        if (matchedUser) ownerId = matchedUser.id;
+      }
+
+      const lookupKey = project.mode === "separate" ? `${targetTrayNum}_${ownerId}` : `${targetTrayNum}`;
+      let currentTray = trayLookup.get(lookupKey);
+      
+      if (currentTray) {
+        if ((currentTray.partNumber || '').toUpperCase() !== partNum) {
+          const assignment = assignTray(project.id, ownerId, classification);
+          if (!assignment) { skipped++; continue; }
+          if (assignment.isNew) {
+            assignment.tray.sticks = [];
+            state.trays.push(assignment.tray);
+            state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
+            newTrays.push(assignment.tray);
+            currentTray = assignment.tray;
+          } else {
+            currentTray = assignment.tray;
+          }
+        }
+      } else {
+        currentTray = {
+          id: generateId('t'), projectId: project.id, ownerUserId: ownerId,
+          partNumber: partNum, label: "", brand, generation: gen,
+          trayNum: targetTrayNum, capacity: project.defaultCap, sticks: [],
+          createdAt: Date.now(), createdBy: ownerId, projectName: project.name
+        };
+        state.trays.push(currentTray);
+        state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, targetTrayNum);
+        newTrays.push(currentTray);
+        trayLookup.set(lookupKey, currentTray);
+      }
+
+      // SMART SYNC REFACTOR:
+      // If we are in 'sync' mode, we need to decide if the CSV quantity is a "Total Goal" or a "Per Row" value.
+      // Most users have "1" per row.
+      let toAdd = targetTotalQty;
+      if (method === "sync") {
+        // If the tray already has sticks, we only add if this specific row represents an addition.
+        // To be safe and simple: in sync mode, if they didn't map a Quantity column, we treat each row as 1.
+        // If they DID map a Quantity column, we treat it as a Target for that row's specific part.
+        if (idxQty >= 0) {
+          toAdd = Math.max(0, targetTotalQty - currentTray.sticks.length);
+        } else {
+          // No quantity column? Each row is 1 stick.
+          toAdd = 1; 
         }
       }
-      // Insert scans in batches
-      for (let c = 0; c < newScans.length; c += 500) {
-        const chunk = newScans.slice(c, c + 500);
-        await sb.from('scans').upsert(chunk);
-        progressEl.textContent = `Uploading scans... ${Math.min(c + 500, newScans.length)}/${newScans.length}`;
-        await new Promise(r => setTimeout(r, 10));
+      
+      if (toAdd <= 0) { skipped++; continue; }
+      
+      while (toAdd > 0) {
+        let space = currentTray.capacity - currentTray.sticks.length;
+        if (space <= 0) {
+          const assignment = assignTray(project.id, session.currentUser.id, classification);
+          if (!assignment) break; 
+          if (assignment.isNew) {
+            assignment.tray.sticks = [];
+            state.trays.push(assignment.tray);
+            state.trayCounters[project.id] = Math.max(state.trayCounters[project.id] || 0, assignment.tray.trayNum);
+            newTrays.push(assignment.tray);
+            currentTray = assignment.tray;
+          } else {
+            currentTray = assignment.tray;
+          }
+          space = currentTray.capacity - currentTray.sticks.length;
+        }
+
+        const batch = Math.min(space, toAdd);
+        for (let b = 0; b < batch; b++) {
+          const scanId = generateId('s');
+          const newScan = {
+            id: scanId, projectId: project.id, userId: ownerId,
+            ts: Date.now() + totalAdded, scan: scanRaw,
+            result: { ...classification, method: "csv_import" },
+            trayId: currentTray.id
+          };
+          currentTray.sticks.push(scanId);
+          // Removed O(N^2) unshift - will bulk merge after loop
+          newScans.push(newScan);
+        }
+        updatedTrays.set(currentTray.id, currentTray);
+        totalAdded += batch;
+        toAdd -= batch;
       }
-      // Update sticks arrays for existing trays
-      for (const [trayId, tray] of updatedTrays) {
-        await sb.from('trays').update({ sticks: tray.sticks }).eq('id', trayId);
-      }
-    } catch (e) {
-      console.error("CSV batch DB write error:", e);
-      showToast("Some data may not have synced to DB — saved locally", "#FFD700");
     }
+    
+    saveLocalState();
+    
+    progressEl.textContent = 'Syncing to database...';
+    statsEl.textContent = `${totalAdded} sticks processed locally. Uploading in batches...`;
+    if (barEl) barEl.style.width = '100%';
+    await new Promise(r => setTimeout(r, 50));
+    
+    if (useSupabase && sb) {
+      try {
+        // 1. Upload newly created trays first
+        if (newTrays.length > 0) {
+          for (let c = 0; c < newTrays.length; c += 100) {
+            const batch = newTrays.slice(c, c + 100);
+            const { error } = await sb.from('trays').upsert(batch);
+            if (error) throw error;
+          }
+        }
+        
+        // 2. Upload all scans in large batches
+        for (let c = 0; c < newScans.length; c += 500) {
+          const batch = newScans.slice(c, c + 500);
+          const { error } = await sb.from('scans').upsert(batch);
+          if (error) throw error;
+          progressEl.textContent = `Uploading scans... ${Math.min(c + 500, newScans.length)}/${newScans.length}`;
+          await new Promise(r => setTimeout(r, 20));
+        }
+        
+        // 3. Finalize tray stick lists (all trays that were modified)
+        const traysToUpdate = Array.from(updatedTrays.values());
+        for (let c = 0; c < traysToUpdate.length; c += 100) {
+          const batch = traysToUpdate.slice(c, c + 100);
+          const { error } = await sb.from('trays').upsert(batch);
+          if (error) throw error;
+          progressEl.textContent = `Finalizing trays... ${Math.min(c + 100, traysToUpdate.length)}/${traysToUpdate.length}`;
+          await new Promise(r => setTimeout(r, 20));
+        }
+      } catch (err) {
+        console.error("Database Sync Error:", err);
+        showToast("Database error: " + (err.message || "Failed to sync batches"), "#ff4444");
+        progressEl.innerHTML = `<div style="color:#ff6b8a">⚠ Sync failed: ${err.message}</div>`;
+        statsEl.innerHTML = `Data is saved locally but might not be on the server.`;
+        // Don't throw, let the finally block clean up
+      }
+    }
+    
+    // Efficiently add to local state scans (bulk merge instead of O(N^2) unshifts)
+    state.scans = [...newScans.reverse(), ...state.scans];
+    
+    showToast(`Import complete: ${totalAdded} sticks added.`, "#3ed685");
+  } catch (e) {
+    console.error("CSV Import error:", e);
+    showToast("Import error. Check console.", "#ff6b8a");
+  } finally {
+    window._isImporting = false;
+    window._pendingCSVImportLines = null;
+    window._pendingCSVImportParseLine = null;
+    const fileInput = document.getElementById("csv-upload");
+    if (fileInput) fileInput.value = "";
+    setTimeout(() => { 
+      window.isBulkScanning = false; 
+      render(); 
+    }, 5000);
   }
-  
-  window.isBulkScanning = false;
-  window._pendingCSVImportLines = null;
-  window._pendingCSVImportParseLine = null;
-  const fileInput = document.getElementById("csv-upload");
-  if (fileInput) fileInput.value = "";
-  
-  showToast(`Import complete: ${totalAdded} sticks added${skipped > 0 ? ` · ${skipped} rows skipped` : ''}.`, "#3ed685");
-  render(); 
 }
 
 function printTrayLabelById(trayId) {
@@ -4072,12 +4682,32 @@ function showToast(msg, color) {
    ════════════════════════════════════════════════════════════════════════ */
 render(); // Show loading screen immediately
 initSupabaseState(); // Then fetch from Supabase in background
+let _searchTimer = null;
 function setGlobalSearch(val) {
   globalSearchQuery = val;
-  // Re-render the specific content page without re-rendering the whole shell so we don't lose focus
-  if (session.page === "trays") renderTraysPage();
-  else if (session.page === "history") renderHistoryPage();
-  else if (session.page === "master") renderMasterPage();
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    if (session.page === "trays") renderTraysPage();
+    else if (session.page === "history") renderHistoryPage();
+    else if (session.page === "master") renderMasterPage();
+    else if (session.page === "summary") renderSummaryPage();
+    else if (session.page === "scanner") updateRecentScans();
+    // Refocus the search input after re-render
+    requestAnimationFrame(() => {
+      const el = document.getElementById('global-search');
+      if (el && globalSearchQuery) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
+  }, 150);
+}
+
+function matchesSearch(q, ...fields) {
+  if (!q) return true;
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const haystack = fields.map(f => String(f || '').toLowerCase()).join(' ');
+  return terms.every(term => haystack.includes(term));
 }
 
 function setPage(p) { session.page = p; globalSearchQuery = ""; render(); }
